@@ -88,3 +88,38 @@ $ docker unpause s2
 $ docker attach s3
 ```
 2. Propose 5 commands from the client and see how the entries get squashed into one snapshotted entry on the server. Propose 5 more commands to see the 5 new entries get snapshotted and merged with the old snapshot.
+
+
+## Daniels notes
+
+To start the kubernetes cluster, we first need to run:
+
+`minikube start --driver docker`
+
+To check the status of our cluster:
+
+`minikube status`
+
+To see the nodes we have running (we should only have 1 because of minikube, but on a larger service we could see more)
+
+`kubectl get node`
+
+To see the pods we have running (here we should see the services we created)
+
+`kubectl get pods`
+
+Example:
+```bash
+$ kubectl get pods
+NAME         READY   STATUS    RESTARTS   AGE
+kv-store-0   1/1     Running   0          86s
+kv-store-1   1/1     Running   0          80s
+kv-store-2   1/1     Running   0          78s
+net          1/1     Running   0          86s
+```
+
+Once all are up and running, to view and make requests to our kv-store
+
+`kubectl attach -it net`
+
+
