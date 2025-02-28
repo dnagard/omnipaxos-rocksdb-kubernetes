@@ -122,4 +122,12 @@ Once all are up and running, to view and make requests to our kv-store
 
 `kubectl attach -it net`
 
+To build a new image and test it:
+
+```bash
+$ docker login
+$ docker build -t dnagard/kv_store:v1 ./kv_store
+$ docker push dnagard/kv_store:v1
+```
+(Obviously change the versioning, both in the bash script and the kube.yml file)
 
