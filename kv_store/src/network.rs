@@ -148,47 +148,49 @@ impl Network {
         let sockets = Arc::new(Mutex::new(HashMap::new()));
         for peer in &peers {
             let addr = peer_addrs.get(&peer).unwrap().clone();
-            println!("Connecting to {}", addr);
-            let stream = TcpStream::connect(addr.clone()).await.unwrap();
-            let (reader, writer) = stream.into_split();
+            //Removing the intiial connection attempt. Will try to connect later down instead
+            //println!("Connecting to {}", addr);
+            //let stream = TcpStream::connect(addr.clone()).await.unwrap();
+            //println!("Connected to {}", addr);
+            //let (reader, writer) = stream.into_split();
 
              //Lock the sockets map before inserting the writer.
-            {
+            /* {
             let mut sockets_guard = sockets.lock().await;
             sockets_guard.insert(*peer, writer);
-            }
+            } */
 
             let msg_buf = incoming_msg_buf.clone();
             // Clone the Arc pointer to sockets for use in the spawned task.
             let sockets_clone = sockets.clone();
             let peer_id = *peer; // Save the peer id as a copy for use inside the closure.
             tokio::spawn(async move {
-                let mut reader = BufReader::new(reader);
-                let mut data = Vec::new();
-                //Clone address so it can be used inside the loop
-                let addr_clone = addr.clone();
                 loop {
-                    data.clear();
-                    let bytes_read = reader.read_until(b'\n', &mut data).await;
-                    if bytes_read.is_err() {
-                        // stream ended. Logic for attempting to reconnect
-                        println!("Connection to {} closed, attempting to reconnect...", addr_clone);
-                        let new_stream = Self::connect_with_retry(&addr_clone).await;
-                        let (new_reader, new_writer) = new_stream.into_split();
-
-                        // Update the writer in the shared sockets map.
-                        {
-                            let mut sockets_guard = sockets_clone.lock().await;
-                            sockets_guard.insert(peer_id, new_writer);
-                        }
-
-                        // Reassign the reader to use the new connection.
-                        reader = BufReader::new(new_reader);
-                        continue;
+                    println!("Attempting connection to {}...", addr);
+                    // Use our retry function to connect.
+                    let stream = Self::connect_with_retry(&addr).await;
+                    println!("Connected to {}", addr);
+                    let (reader, writer) = stream.into_split();
+                    // Update the sockets map with the new writer.
+                    {
+                        let mut sockets_guard = sockets_clone.lock().await;
+                        sockets_guard.insert(peer_id, writer);
                     }
-                    let msg: Message =
-                        serde_json::from_slice(&data).expect("could not deserialize msg");
-                    msg_buf.lock().await.push(msg);
+                    // NEW: Inner loop to continuously read messages from the current connection.
+                    let mut reader = BufReader::new(reader);
+                    loop {
+                        let mut data = Vec::new();
+                        let bytes_read = reader.read_until(b'\n', &mut data).await;
+                        // If there's an error or if zero bytes are read, then the connection is lost.
+                        if bytes_read.is_err() || bytes_read.unwrap() == 0 {
+                            println!("Connection to {} lost, reconnecting...", addr);
+                            // Break out of the inner loop to trigger a reconnection.
+                            break;
+                        }
+                        let msg: Message = serde_json::from_slice(&data)
+                            .expect("could not deserialize msg");
+                        msg_buf.lock().await.push(msg);
+                    }
                 }
             });
         }
