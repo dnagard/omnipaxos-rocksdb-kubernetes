@@ -39,6 +39,7 @@ impl Server {
             match msg {
                 Message::APIRequest(kv_cmd) => match kv_cmd {
                     KVCommand::Get(key) => {
+                        println!("Received GET request for key: {}", key);
                         let value = self.database.handle_command(KVCommand::Get(key.clone()));
                         let msg = Message::APIResponse(APIResponse::Get(key, value));
                         // Send response to client (0 is the clientID)
@@ -49,6 +50,7 @@ impl Server {
                     }
                 },
                 Message::OmniPaxosMsg(msg) => {
+                    //println!("Received OmniPaxos message: {:?}", msg);
                     self.omni_paxos.handle_incoming(msg);
                 }
                 _ => unimplemented!(),
