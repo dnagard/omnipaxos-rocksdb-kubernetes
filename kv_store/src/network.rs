@@ -25,7 +25,7 @@ pub(crate) enum Message {
 //Defining the Network struct
 pub struct Network {
     //Maps peer IDs to the write-half of their TCP connections.
-    sockets: HashMap<u64, tcp::OwnedWriteHalf>, 
+    sockets: Arc<Mutex<HashMap<u64, tcp::OwnedWriteHalf>>>, 
     //An optional write-half for teh connection to the API client (using receiver ID 0).
     api_socket: Option<tcp::OwnedWriteHalf>,
     //A shared, thread-safe (wrapped in Arc<Mutex<...>>) buffer for storing incoming messages until they are processed.
@@ -57,19 +57,21 @@ impl Network {
     pub(crate) async fn send(&mut self, receiver: u64, msg: Message) {
         //If the receiver is 0, send the message over teh api_socket; 
         // otherwise retrieve the corresponding peer socket from the sockets hashmap.
-        // This if statement is treated as a RHV (right-hand value) expression, setting the writer variable to the appropriate connection.
-        let writer = if receiver == 0 {
-            self.api_socket.as_mut()
-        } else {
-            self.sockets.get_mut(&receiver)
-        };
+        // However, we need to be thread-safe when accessing the sockets hashmap, so we lock it first.
 
-        //Some(writer) = writer is a pattern to check if a writer exists. If writer is 'Some', a valid socket exists => execute the block
-        if let Some(writer) = writer {
-            let mut data = serde_json::to_vec(&msg).expect("could not serialize msg");
-            data.push(b'\n');
-            writer.write_all(&data).await.unwrap(); //Write the serialized message to the socket. Await waits for the write to complete. Unwrap panics if the write fails.
+        let mut data = serde_json::to_vec(&msg).expect("could not serialize msg");
+        data.push(b'\n');
+        if receiver == 0 {
+            if let Some(writer) = self.api_socket.as_mut() {
+                writer.write_all(&data).await.unwrap();
+            }
+        } else {
+            let mut sockets_guard = self.sockets.lock().await;
+            if let Some(writer) = sockets_guard.get_mut(&receiver) {
+                writer.write_all(&data).await.unwrap();
+            }
         }
+
     }
 
     /// Returns all messages received since last called.
@@ -81,17 +83,31 @@ impl Network {
         ret
     }
 
+    // Helper function for connecting to a given address with retry logic.
+    async fn connect_with_retry(addr: &str) -> TcpStream {
+        loop {
+            match TcpStream::connect(addr).await {
+                Ok(stream) => return stream,
+                Err(err) => {
+                    eprintln!("Failed to connect to {}: {}. Retrying...", addr, err);
+                    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                }
+            }
+        }
+    }
+
+
     /* 
-    Sets up all the necessary connections and asynchronous tasks required for the network layer to operate. 
-    Returns an initialized Network instance ready to send and receive messages. 
+    ! Sets up all the necessary connections and asynchronous tasks required for the network layer to operate. 
+    ! Returns an initialized Network instance ready to send and receive messages. 
     -----------------------------------------------------------
     * Peer discovery: Creates a list of peer PIDs by filtering the NODES list to exclude the current node's PID.
     * Connecting to the API: Constructs the API address using get_my_api_addr() and connects to it using TCP. Splits the connection into a reader and writer, storing the writer in api_socket.
     * Shared message buffer: Creates a shared, thread-safe buffer for storing incoming messages across multiple async tasks.
     * Spawning reader tasks:
-        *API reader task: A Tokio task is spawend that continously reads from the API connection using a buffered reader. Every timea  complete message (ending in a newline) is received, it is deserialied and appended to teh sahred message buffer.
+        * API reader task: A Tokio task is spawend that continously reads from the API connection using a buffered reader. Every timea  complete message (ending in a newline) is received, it is deserialied and appended to teh sahred message buffer.
         * Peer reader task: For each peer, a similar task is spawned to read incoming messages from that peer's TCP connection. These messages are alsod eserialized and appended to the shared message buffer.
-    *Storing Peer Writers: The writer half of each TCP connection is stored int he sockets HashMap so that messages can be sent to those peers later.  
+    * Storing Peer Writers: The writer half of each TCP connection is stored int he sockets HashMap so that messages can be sent to those peers later.  
     */
     pub(crate) async fn new() -> Self {
         let peers: Vec<u64> = NODES
@@ -128,23 +144,47 @@ impl Network {
             }
         });
 
-        let mut sockets = HashMap::new();
+        // Wrap sockets Hash Map in Arc<Mutex<>> for shared, thread-safe access.
+        let sockets = Arc::new(Mutex::new(HashMap::new()));
         for peer in &peers {
             let addr = peer_addrs.get(&peer).unwrap().clone();
             println!("Connecting to {}", addr);
-            let stream = TcpStream::connect(addr).await.unwrap();
+            let stream = TcpStream::connect(addr.clone()).await.unwrap();
             let (reader, writer) = stream.into_split();
-            sockets.insert(*peer, writer);
+
+             //Lock the sockets map before inserting the writer.
+            {
+            let mut sockets_guard = sockets.lock().await;
+            sockets_guard.insert(*peer, writer);
+            }
+
             let msg_buf = incoming_msg_buf.clone();
+            // Clone the Arc pointer to sockets for use in the spawned task.
+            let sockets_clone = sockets.clone();
+            let peer_id = *peer; // Save the peer id as a copy for use inside the closure.
             tokio::spawn(async move {
                 let mut reader = BufReader::new(reader);
                 let mut data = Vec::new();
+                //Clone address so it can be used inside the loop
+                let addr_clone = addr.clone();
                 loop {
                     data.clear();
                     let bytes_read = reader.read_until(b'\n', &mut data).await;
                     if bytes_read.is_err() {
-                        // stream ended?
-                        panic!("stream ended?")
+                        // stream ended. Logic for attempting to reconnect
+                        println!("Connection to {} closed, attempting to reconnect...", addr_clone);
+                        let new_stream = Self::connect_with_retry(&addr_clone).await;
+                        let (new_reader, new_writer) = new_stream.into_split();
+
+                        // Update the writer in the shared sockets map.
+                        {
+                            let mut sockets_guard = sockets_clone.lock().await;
+                            sockets_guard.insert(peer_id, new_writer);
+                        }
+
+                        // Reassign the reader to use the new connection.
+                        reader = BufReader::new(new_reader);
+                        continue;
                     }
                     let msg: Message =
                         serde_json::from_slice(&data).expect("could not deserialize msg");
