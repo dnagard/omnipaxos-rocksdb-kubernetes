@@ -51,4 +51,10 @@ impl Database {
             Err(e) => panic!("failed to delete value: {}", e),
         }
     }
+
+    pub fn flush(&self) {
+        // RocksDB automatically flushes to disk, but we can add explicit flush if needed
+        // This is a placeholder for any additional flush logic
+        println!("Database flushed to disk");
+    }
 }

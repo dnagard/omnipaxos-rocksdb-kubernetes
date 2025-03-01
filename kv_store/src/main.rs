@@ -1,8 +1,9 @@
 use crate::kv::KVCommand;
 use crate::server::Server;
 use omnipaxos::*;
-use omnipaxos_storage::memory_storage::MemoryStorage;
+use omnipaxos_storage::persistent_storage::PersistentStorage;
 use std::env;
+use std::path::Path;
 use tokio;
 
 #[macro_use]
@@ -31,7 +32,7 @@ lazy_static! {
     };
 }
 
-type OmniPaxosKV = OmniPaxos<KVCommand, MemoryStorage<KVCommand>>;
+type OmniPaxosKV = OmniPaxos<KVCommand, PersistentStorage<KVCommand>>;
 
 #[tokio::main]
 async fn main() {
@@ -49,9 +50,17 @@ async fn main() {
         server_config,
         cluster_config,
     };
+    
+    let storage_path = format!("/data/omnipaxos_{}", *PID);
+    std::fs::create_dir_all(&storage_path).expect("Failed to create storage directory");
+    
+    let storage = PersistentStorage::new(Path::new(&storage_path))
+        .expect("Failed to initialize persistent storage");
+    
     let omni_paxos = op_config
-        .build(MemoryStorage::default())
+        .build(storage)
         .expect("failed to build OmniPaxos");
+    
     let mut server = Server {
         omni_paxos,
         network: network::Network::new().await,

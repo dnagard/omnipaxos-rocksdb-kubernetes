@@ -56,20 +56,44 @@ impl Network {
     /// Sends a serialized JSON message over the appropriate TCP connection
     /// u64 0 is the Client.
     pub(crate) async fn send(&mut self, receiver: u64, msg: Message) {
-        //If the receiver is 0, send the message over teh api_socket; 
-        // otherwise retrieve the corresponding peer socket from the sockets hashmap.
-        // This if statement is treated as a RHV (right-hand value) expression, setting the writer variable to the appropriate connection.
         let writer = if receiver == 0 {
             self.api_socket.as_mut()
         } else {
             self.sockets.get_mut(&receiver)
         };
 
-        //Some(writer) = writer is a pattern to check if a writer exists. If writer is 'Some', a valid socket exists => execute the block
         if let Some(writer) = writer {
             let mut data = serde_json::to_vec(&msg).expect("could not serialize msg");
             data.push(b'\n');
-            writer.write_all(&data).await.unwrap(); //Write the serialized message to the socket. Await waits for the write to complete. Unwrap panics if the write fails.
+            
+            // Handle write errors and trigger reconnection if needed
+            if let Err(e) = writer.write_all(&data).await {
+                println!("Failed to send message to {}: {}", receiver, e);
+                
+                // Mark connection as lost
+                if receiver != 0 {
+                    self.sockets.remove(&receiver);
+                    println!("Removed failed connection to peer {}, will reconnect on next check", receiver);
+                } else {
+                    self.api_socket = None;
+                    println!("API connection lost, will reconnect on next check");
+                }
+            }
+        } else {
+            // If we don't have a connection, try to establish one immediately
+            if receiver != 0 {
+                println!("No connection to peer {} for sending, connecting now", receiver);
+                self.connect_to_peer(receiver).await;
+                
+                // Try sending again if we now have a connection
+                if let Some(writer) = self.sockets.get_mut(&receiver) {
+                    let mut data = serde_json::to_vec(&msg).expect("could not serialize msg");
+                    data.push(b'\n');
+                    if let Err(e) = writer.write_all(&data).await {
+                        println!("Still failed to send message to {} after reconnection: {}", receiver, e);
+                    }
+                }
+            }
         }
     }
 
@@ -95,22 +119,48 @@ impl Network {
     *Storing Peer Writers: The writer half of each TCP connection is stored int he sockets HashMap so that messages can be sent to those peers later.  
     */
     pub async fn new() -> Self {
-        let mut network = Self {
+        println!("Initializing network for node {}", *MY_PID);
+        
+        let network = Self {
             sockets: HashMap::new(),
             api_socket: None,
             incoming_msg_buf: Arc::new(Mutex::new(vec![])),
         };
         
-        // Connect to API with retry logic
-        network.connect_to_api().await;
+        // Return the network instance first, then connect in the background
+        // This prevents deadlocks if other nodes are also starting up
+        let network_arc = Arc::new(Mutex::new(network));
+        let network_clone = network_arc.clone();
         
-        // Connect to peers with retry logic
-        network.connect_to_peers().await;
+        // Spawn a task to handle connections
+        tokio::spawn(async move {
+            // Wait a bit to let other nodes start up
+            time::sleep(Duration::from_secs(1)).await;
+            
+            let mut network = network_clone.lock().await;
+            
+            // Connect to API
+            network.connect_to_api().await;
+            
+            // Connect to peers
+            network.connect_to_peers().await;
+            
+            println!("Network initialization complete for node {}", *MY_PID);
+        });
         
-        network
+        // Wait a bit to give the connection task a chance to start
+        time::sleep(Duration::from_millis(100)).await;
+        
+        // Return the network instance
+        Arc::try_unwrap(network_arc)
+            .expect("Failed to unwrap network Arc")
+            .into_inner()
     }
     
     async fn connect_to_api(&mut self) {
+        // First, remove any existing connection
+        self.api_socket = None;
+        
         let api_addr = Self::get_my_api_addr();
         println!("Connecting to API at {}", api_addr);
         
@@ -118,6 +168,11 @@ impl Network {
         for retry in 1..=10 {
             match TcpStream::connect(&api_addr).await {
                 Ok(stream) => {
+                    // Set TCP keepalive
+                    if let Err(e) = stream.set_keepalive(Some(Duration::from_secs(5))) {
+                        println!("Warning: Failed to set keepalive for API: {}", e);
+                    }
+                    
                     let (api_reader, api_writer) = stream.into_split();
                     self.api_socket = Some(api_writer);
                     
@@ -130,17 +185,22 @@ impl Network {
                             data.clear();
                             let bytes_read = reader.read_until(b'\n', &mut data).await;
                             if bytes_read.is_err() {
+                                println!("API connection error: {:?}", bytes_read.err());
                                 // Connection error, exit loop
                                 break;
                             }
                             if bytes_read.unwrap() == 0 {
+                                println!("EOF received from API");
                                 // EOF, exit loop
                                 break;
                             }
                             if let Ok(msg) = serde_json::from_slice::<Message>(&data) {
                                 msg_buf.lock().await.push(msg);
+                            } else {
+                                println!("Failed to deserialize message from API");
                             }
                         }
+                        println!("API connection lost, will be reconnected on next check");
                     });
                     
                     println!("Successfully connected to API");
@@ -172,6 +232,9 @@ impl Network {
     }
     
     async fn connect_to_peer(&mut self, peer: u64) {
+        // First, remove any existing connection to ensure we start fresh
+        self.sockets.remove(&peer);
+        
         let peer_addr = Self::get_peer_addr(peer);
         println!("Connecting to peer {} at {}", peer, peer_addr);
         
@@ -179,11 +242,19 @@ impl Network {
         for retry in 1..=10 {
             match TcpStream::connect(&peer_addr).await {
                 Ok(stream) => {
+                    // Set TCP keepalive to detect dead connections
+                    if let Err(e) = stream.set_keepalive(Some(Duration::from_secs(5))) {
+                        println!("Warning: Failed to set keepalive for peer {}: {}", peer, e);
+                    }
+                    
                     let (peer_reader, peer_writer) = stream.into_split();
                     self.sockets.insert(peer, peer_writer);
                     
                     // Setup reader for peer
                     let msg_buf = self.incoming_msg_buf.clone();
+                    let peer_id = peer; // Clone for the async block
+                    let sockets_ref = Arc::new(Mutex::new(&mut self.sockets));
+                    
                     tokio::spawn(async move {
                         let mut reader = BufReader::new(peer_reader);
                         let mut data = Vec::new();
@@ -191,17 +262,24 @@ impl Network {
                             data.clear();
                             let bytes_read = reader.read_until(b'\n', &mut data).await;
                             if bytes_read.is_err() {
+                                println!("Connection error with peer {}: {:?}", peer_id, bytes_read.err());
                                 // Connection error, exit loop
                                 break;
                             }
                             if bytes_read.unwrap() == 0 {
+                                println!("EOF received from peer {}", peer_id);
                                 // EOF, exit loop
                                 break;
                             }
                             if let Ok(msg) = serde_json::from_slice::<Message>(&data) {
                                 msg_buf.lock().await.push(msg);
+                            } else {
+                                println!("Failed to deserialize message from peer {}", peer_id);
                             }
                         }
+                        
+                        // When the connection is lost, we should mark it for reconnection
+                        println!("Connection to peer {} lost, will be reconnected on next check", peer_id);
                     });
                     
                     println!("Successfully connected to peer {}", peer);
@@ -236,9 +314,18 @@ impl Network {
             .collect();
             
         for peer in peers {
-            if !self.sockets.contains_key(&peer) {
-                println!("Connection to peer {} lost, attempting to reconnect...", peer);
-                self.connect_to_peer(peer).await;
+            // Always try to reconnect to ensure we have fresh connections
+            println!("Refreshing connection to peer {}", peer);
+            self.connect_to_peer(peer).await;
+        }
+        
+        // After reconnecting, send a ping to all peers to verify connections
+        for peer in peers {
+            if self.sockets.contains_key(&peer) {
+                println!("Sending ping to peer {}", peer);
+                // Create a simple ping message (we'll use a Get command as a ping)
+                let ping_msg = Message::APIRequest(KVCommand::Get("__ping__".to_string()));
+                self.send(peer, ping_msg).await;
             }
         }
     }
