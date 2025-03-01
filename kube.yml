@@ -126,7 +126,7 @@ spec:
     spec:
       containers:
         - name: kv-store
-          image: arejula27/kvs:v1.1 # Replace with your actual image
+          image: dnagard/kv_store:v2.4 # Replace with your actual image
           imagePullPolicy: Always
           env:
             - name: NODES

@@ -6,6 +6,7 @@ use crate::kv::KVCommand;
 use crate::{
     network::{Message, Network},
     OmniPaxosKV,
+    PID as MY_PID,
 };
 use omnipaxos::util::LogEntry;
 use serde::{Deserialize, Serialize};
@@ -50,7 +51,10 @@ impl Server {
                 },
                 Message::OmniPaxosMsg(msg) => {
                     self.omni_paxos.handle_incoming(msg);
-                }
+                }, 
+                Message::Debug(msg) => {
+                    println!("Debug: {}", msg);
+                },
                 _ => unimplemented!(),
             }
         }
@@ -111,12 +115,21 @@ impl Server {
         }
     }
 
+    async fn debug_heartbeat(&mut self) {
+        //Send a debug message to nodes 1, 2, and 3 saying "Heartbeat from node <MY_PID>"
+        for pid in 1..4 {
+            let msg = Message::Debug(format!("Heartbeat from node {}", *MY_PID));
+            self.network.send(pid, msg).await;
+        }
+    }
+
     //Main loop of the server that processes incoming messages, sends outgoing messages, and updates the database based on decided entries.
     //The run method uses tokio::select! to handle multiple asynchronous tasks concurrently.
     //The biased; directive gives priority to the first branch (message processing).
     pub(crate) async fn run(&mut self) {
         let mut msg_interval = time::interval(Duration::from_millis(1));
         let mut tick_interval = time::interval(Duration::from_millis(10));
+        let mut debug_heartbeat = time::interval(Duration::from_secs(5));
         loop {
             tokio::select! {
                 biased;
@@ -127,6 +140,9 @@ impl Server {
                 },
                 _ = tick_interval.tick() => {
                     self.omni_paxos.tick();
+                },
+                _ = debug_heartbeat.tick() => {
+                    self.debug_heartbeat().await;
                 },
                 else => (),
             }
