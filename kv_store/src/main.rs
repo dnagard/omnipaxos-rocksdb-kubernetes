@@ -55,7 +55,7 @@ async fn main() {
     let mut server = Server {
         omni_paxos,
         network: network::Network::new().await,
-        database: database::Database::new(format!("db_{}", *PID).as_str()),
+        database: database::Database::new(format!("/data/db_{}", *PID).as_str()),
         last_decided_idx: 0,
     };
     server.run().await;

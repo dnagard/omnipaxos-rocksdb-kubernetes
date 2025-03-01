@@ -13,9 +13,9 @@ metadata:
   labels:
     app: net
 spec:
-  clusterIP: None  # Headless service, no single IP
+  clusterIP: None # Headless service, no single IP
   selector:
-    app: net  # This selector needs to match the label of the 'net' pod
+    app: net # This selector needs to match the label of the 'net' pod
   ports:
     - name: "8001"
       port: 8001
@@ -97,7 +97,7 @@ spec:
           value: "[[8013,8031],[8012,8021],[8023,8032], [8014, 8041], [8024, 8042], [8034, 8043]]"
         - name: CLIENT_PORTS
           value: "[8001, 8002, 8003, 8004]"
-        - name: NODES  
+        - name: NODES
           valueFrom:
             configMapKeyRef:
               name: kv-config
@@ -108,7 +108,6 @@ spec:
               name: kv-config
               key: RUST_BACKTRACE
 ---
-
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -126,7 +125,7 @@ spec:
     spec:
       containers:
         - name: kv-store
-          image: arejula27/kvs:v1.1 # Replace with your actual image
+          image: arejula27/kvs:v1.1
           imagePullPolicy: Always
           env:
             - name: NODES
@@ -144,5 +143,19 @@ spec:
                 fieldRef:
                   fieldPath: metadata.name
           command: ["/bin/sh", "-c"]
-          # As the program does not allow to have PID=0, we need to increment the PID by 1
-          args: ["export PID=$(echo $POD_NAME | sed 's/[^0-9]*\\([0-9]*\\)$/\\1/')&& PID=$((PID + 1)) && exec kv_demo"]
+          args:
+            [
+              "export PID=$(echo $POD_NAME | sed 's/[^0-9]*\\([0-9]*\\)$/\\1/')&& PID=$((PID + 1))
+              && exec kv_demo",
+            ]
+          volumeMounts:
+            - name: data
+              mountPath: /data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi

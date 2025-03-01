@@ -26,7 +26,7 @@ pub struct Server {
     pub omni_paxos: OmniPaxosKV, //OmniPaxos instance for the server
     pub network: Network, //Manages sending and receiving messages from other nodes or clients.
     pub database: Database, //Handles the actual storage and retrieval of key-value pairs.
-    pub last_decided_idx: u64, //Tracks the last log entry that was “decided” (i.e., agreed upon by the consensus process) and applied to the database.
+    pub last_decided_idx: u64, //Tracks the last log entry that was "decided" (i.e., agreed upon by the consensus process) and applied to the database.
 }
 
 // Implementing the Server struct
@@ -115,8 +115,13 @@ impl Server {
     //The run method uses tokio::select! to handle multiple asynchronous tasks concurrently.
     //The biased; directive gives priority to the first branch (message processing).
     pub(crate) async fn run(&mut self) {
+        // First, try to recover state from disk or other nodes
+        self.recover_state().await;
+        
         let mut msg_interval = time::interval(Duration::from_millis(1));
         let mut tick_interval = time::interval(Duration::from_millis(10));
+        let mut reconnect_interval = time::interval(Duration::from_secs(5));
+        
         loop {
             tokio::select! {
                 biased;
@@ -128,8 +133,42 @@ impl Server {
                 _ = tick_interval.tick() => {
                     self.omni_paxos.tick();
                 },
+                _ = reconnect_interval.tick() => {
+                    self.network.check_and_reconnect().await;
+                },
                 else => (),
             }
+        }
+    }
+
+    async fn recover_state(&mut self) {
+        println!("Starting recovery process...");
+        
+        // Give some time for network connections to establish
+        time::sleep(Duration::from_secs(2)).await;
+        
+        // Try to catch up with the cluster by requesting the latest decided index
+        // This will trigger OmniPaxos to sync the log
+        for _ in 0..10 {
+            self.omni_paxos.tick();
+            self.send_outgoing_msgs().await;
+            time::sleep(Duration::from_millis(100)).await;
+            self.process_incoming_msgs().await;
+        }
+        
+        // Check if we've recovered any entries
+        let decided_idx = self.omni_paxos.get_decided_idx();
+        if decided_idx > 0 {
+            println!("Recovered log up to index {}", decided_idx);
+            
+            // Apply all decided entries to our database
+            if let Ok(entries) = self.omni_paxos.read_decided_suffix(0) {
+                self.update_database(entries);
+                self.last_decided_idx = decided_idx as u64;
+                println!("Applied {} log entries to database", decided_idx);
+            }
+        } else {
+            println!("No entries recovered, starting with empty state");
         }
     }
 }

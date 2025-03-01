@@ -9,6 +9,7 @@ use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     net::{tcp, TcpStream},
     sync::Mutex,
+    time,
 };
 
 use crate::{kv::KVCommand, server::APIResponse, NODES, PID as MY_PID};
@@ -93,69 +94,152 @@ impl Network {
         * Peer reader task: For each peer, a similar task is spawned to read incoming messages from that peer's TCP connection. These messages are alsod eserialized and appended to the shared message buffer.
     *Storing Peer Writers: The writer half of each TCP connection is stored int he sockets HashMap so that messages can be sent to those peers later.  
     */
-    pub(crate) async fn new() -> Self {
+    pub async fn new() -> Self {
+        let mut network = Self {
+            sockets: HashMap::new(),
+            api_socket: None,
+            incoming_msg_buf: Arc::new(Mutex::new(vec![])),
+        };
+        
+        // Connect to API with retry logic
+        network.connect_to_api().await;
+        
+        // Connect to peers with retry logic
+        network.connect_to_peers().await;
+        
+        network
+    }
+    
+    async fn connect_to_api(&mut self) {
+        let api_addr = Self::get_my_api_addr();
+        println!("Connecting to API at {}", api_addr);
+        
+        // Retry connection with backoff
+        for retry in 1..=10 {
+            match TcpStream::connect(&api_addr).await {
+                Ok(stream) => {
+                    let (api_reader, api_writer) = stream.into_split();
+                    self.api_socket = Some(api_writer);
+                    
+                    // Setup reader for API
+                    let msg_buf = self.incoming_msg_buf.clone();
+                    tokio::spawn(async move {
+                        let mut reader = BufReader::new(api_reader);
+                        let mut data = Vec::new();
+                        loop {
+                            data.clear();
+                            let bytes_read = reader.read_until(b'\n', &mut data).await;
+                            if bytes_read.is_err() {
+                                // Connection error, exit loop
+                                break;
+                            }
+                            if bytes_read.unwrap() == 0 {
+                                // EOF, exit loop
+                                break;
+                            }
+                            if let Ok(msg) = serde_json::from_slice::<Message>(&data) {
+                                msg_buf.lock().await.push(msg);
+                            }
+                        }
+                    });
+                    
+                    println!("Successfully connected to API");
+                    break;
+                }
+                Err(e) => {
+                    println!("Failed to connect to API (attempt {}): {}", retry, e);
+                    if retry < 10 {
+                        // Exponential backoff
+                        time::sleep(Duration::from_millis(100 * retry)).await;
+                    } else {
+                        println!("Giving up on API connection after 10 attempts");
+                    }
+                }
+            }
+        }
+    }
+    
+    async fn connect_to_peers(&mut self) {
         let peers: Vec<u64> = NODES
             .iter()
             .filter(|pid| **pid != *MY_PID)
             .cloned()
             .collect();
-        let mut peer_addrs = HashMap::new();
-        for pid in &peers {
-            peer_addrs.insert(*pid, Self::get_peer_addr(*pid));
+            
+        for peer in peers {
+            self.connect_to_peer(peer).await;
         }
-        println!("My API Addr: {}", Self::get_my_api_addr());
-        let err_msg = format!("Could not connect to API at {}", Self::get_my_api_addr());
-        let api_stream = TcpStream::connect(Self::get_my_api_addr())
-            .await
-            .expect(&err_msg);
-        let (api_reader, api_writer) = api_stream.into_split();
-        let api_socket = Some(api_writer);
-        let incoming_msg_buf = Arc::new(Mutex::new(vec![]));
-        let msg_buf = incoming_msg_buf.clone();
-        tokio::spawn(async move {
-            let mut reader = BufReader::new(api_reader);
-            let mut data = Vec::new();
-            loop {
-                data.clear();
-                let bytes_read = reader.read_until(b'\n', &mut data).await;
-                if bytes_read.is_err() {
-                    // stream ended?
-                    panic!("stream ended?")
+    }
+    
+    async fn connect_to_peer(&mut self, peer: u64) {
+        let peer_addr = Self::get_peer_addr(peer);
+        println!("Connecting to peer {} at {}", peer, peer_addr);
+        
+        // Retry connection with backoff
+        for retry in 1..=10 {
+            match TcpStream::connect(&peer_addr).await {
+                Ok(stream) => {
+                    let (peer_reader, peer_writer) = stream.into_split();
+                    self.sockets.insert(peer, peer_writer);
+                    
+                    // Setup reader for peer
+                    let msg_buf = self.incoming_msg_buf.clone();
+                    tokio::spawn(async move {
+                        let mut reader = BufReader::new(peer_reader);
+                        let mut data = Vec::new();
+                        loop {
+                            data.clear();
+                            let bytes_read = reader.read_until(b'\n', &mut data).await;
+                            if bytes_read.is_err() {
+                                // Connection error, exit loop
+                                break;
+                            }
+                            if bytes_read.unwrap() == 0 {
+                                // EOF, exit loop
+                                break;
+                            }
+                            if let Ok(msg) = serde_json::from_slice::<Message>(&data) {
+                                msg_buf.lock().await.push(msg);
+                            }
+                        }
+                    });
+                    
+                    println!("Successfully connected to peer {}", peer);
+                    break;
                 }
-                let msg: Message =
-                    serde_json::from_slice(&data).expect("could not deserialize msg");
-                msg_buf.lock().await.push(msg);
-            }
-        });
-
-        let mut sockets = HashMap::new();
-        for peer in &peers {
-            let addr = peer_addrs.get(&peer).unwrap().clone();
-            println!("Connecting to {}", addr);
-            let stream = TcpStream::connect(addr).await.unwrap();
-            let (reader, writer) = stream.into_split();
-            sockets.insert(*peer, writer);
-            let msg_buf = incoming_msg_buf.clone();
-            tokio::spawn(async move {
-                let mut reader = BufReader::new(reader);
-                let mut data = Vec::new();
-                loop {
-                    data.clear();
-                    let bytes_read = reader.read_until(b'\n', &mut data).await;
-                    if bytes_read.is_err() {
-                        // stream ended?
-                        panic!("stream ended?")
+                Err(e) => {
+                    println!("Failed to connect to peer {} (attempt {}): {}", peer, retry, e);
+                    if retry < 10 {
+                        // Exponential backoff
+                        time::sleep(Duration::from_millis(100 * retry)).await;
+                    } else {
+                        println!("Giving up on peer {} connection after 10 attempts", peer);
                     }
-                    let msg: Message =
-                        serde_json::from_slice(&data).expect("could not deserialize msg");
-                    msg_buf.lock().await.push(msg);
                 }
-            });
+            }
         }
-        Self {
-            sockets,
-            api_socket,
-            incoming_msg_buf,
+    }
+    
+    // Add a method to reconnect if connections are lost
+    pub async fn check_and_reconnect(&mut self) {
+        // Check API connection
+        if self.api_socket.is_none() {
+            println!("API connection lost, attempting to reconnect...");
+            self.connect_to_api().await;
+        }
+        
+        // Check peer connections
+        let peers: Vec<u64> = NODES
+            .iter()
+            .filter(|pid| **pid != *MY_PID)
+            .cloned()
+            .collect();
+            
+        for peer in peers {
+            if !self.sockets.contains_key(&peer) {
+                println!("Connection to peer {} lost, attempting to reconnect...", peer);
+                self.connect_to_peer(peer).await;
+            }
         }
     }
 }
