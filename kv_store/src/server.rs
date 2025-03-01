@@ -6,11 +6,14 @@ use crate::kv::KVCommand;
 use crate::{
     network::{Message, Network},
     OmniPaxosKV,
+    NODES,
+    PID,
 };
 use omnipaxos::util::LogEntry;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use tokio::time;
+use std::collections::HashMap;
 
 //Defines the types of responses the server can send back to a client
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,55 +39,7 @@ impl Server {
     async fn process_incoming_msgs(&mut self) {
         let messages = self.network.get_received().await;
         for msg in messages {
-            match msg {
-                Message::APIRequest(kv_cmd) => match kv_cmd {
-                    KVCommand::Get(key) => {
-                        // Special handling for ping messages
-                        if key == "__ping__" {
-                            println!("Received ping request, responding with pong");
-                            let msg = Message::APIResponse(APIResponse::Get("__ping__".to_string(), Some("__pong__".to_string())));
-                            // Send response to the sender (which is a peer, not the client)
-                            // We need to determine which peer sent this
-                            // For now, broadcast to all peers
-                            for peer in NODES.iter().filter(|&pid| *pid != *PID) {
-                                self.network.send(*peer, msg.clone()).await;
-                            }
-                            // Also send to client for debugging
-                            self.network.send(0, msg).await;
-                        } else {
-                            // Normal GET request
-                            println!("Processing GET request for key: {}", key);
-                            let value = self.database.handle_command(KVCommand::Get(key.clone()));
-                            println!("GET result for key {}: {:?}", key, value);
-                            let msg = Message::APIResponse(APIResponse::Get(key, value));
-                            // Send response to client (0 is the clientID)
-                            self.network.send(0, msg).await;
-                        }
-                    }
-                    cmd => {
-                        println!("Appending command to log: {:?}", cmd);
-                        match self.omni_paxos.append(cmd.clone()) {
-                            Ok(_) => println!("Successfully appended command to log"),
-                            Err(e) => println!("Failed to append command to log: {:?}", e),
-                        }
-                        
-                        // Force a tick and send messages to propagate this command
-                        self.omni_paxos.tick();
-                        self.send_outgoing_msgs().await;
-                    }
-                },
-                Message::OmniPaxosMsg(msg) => {
-                    println!("Received OmniPaxos message: {:?}", msg);
-                    self.omni_paxos.handle_incoming(msg);
-                    
-                    // Force a tick and send messages to respond to this message
-                    self.omni_paxos.tick();
-                    self.send_outgoing_msgs().await;
-                }
-                _ => {
-                    println!("Received unhandled message type: {:?}", msg);
-                }
-            }
+            self.handle_message(msg).await;
         }
         
         // After processing messages, check if we need to update our database
@@ -194,10 +149,20 @@ impl Server {
         // First, try to recover state from disk or other nodes
         self.recover_state().await;
         
+        // After recovery, ensure we're fully synchronized before accepting commands
+        println!("Performing post-recovery synchronization...");
+        for _ in 0..5 {
+            // Force multiple sync attempts to ensure we're caught up
+            self.force_sync().await;
+            time::sleep(Duration::from_millis(500)).await;
+        }
+        
+        println!("Node fully initialized and ready to process commands");
+        
         let mut msg_interval = time::interval(Duration::from_millis(1));
         let mut tick_interval = time::interval(Duration::from_millis(10));
         let mut reconnect_interval = time::interval(Duration::from_secs(5));
-        let mut sync_interval = time::interval(Duration::from_secs(15));
+        let mut sync_interval = time::interval(Duration::from_secs(5)); // Reduced from 15 to 5 seconds
         
         loop {
             tokio::select! {
@@ -243,20 +208,21 @@ impl Server {
         // Give some time for network connections to establish
         time::sleep(Duration::from_secs(2)).await;
         
+        // Request database sync from peers
+        self.request_database_sync().await;
+        
         // Try to catch up with the cluster by requesting the latest decided index
         // This will trigger OmniPaxos to sync the log
-        println!("Attempting to sync with peers...");
-        for i in 0..15 {
-            println!("Sync attempt {}/15", i+1);
+        for _ in 0..10 {
             self.omni_paxos.tick();
             self.send_outgoing_msgs().await;
-            time::sleep(Duration::from_millis(200)).await;
+            time::sleep(Duration::from_millis(100)).await;
             self.process_incoming_msgs().await;
             
             // Check if we've made progress
             let current_decided_idx = self.omni_paxos.get_decided_idx();
-            if current_decided_idx > local_decided_idx {
-                println!("Synced additional entries up to index {}", current_decided_idx);
+            if current_decided_idx > self.last_decided_idx as usize {
+                println!("Recovered log up to index {}", current_decided_idx);
                 
                 // Apply any new entries we've learned about
                 if let Ok(entries) = self.omni_paxos.read_decided_suffix(self.last_decided_idx as usize) {
@@ -304,6 +270,136 @@ impl Server {
             }
         } else {
             println!("Sync complete - no new entries found");
+        }
+    }
+
+    // Request a full database sync from peers
+    async fn request_database_sync(&mut self) {
+        println!("Requesting database sync from peers...");
+        
+        // Create a special message to request database sync
+        let sync_request = Message::APIRequest(KVCommand::Get("__sync_request__".to_string()));
+        
+        // Send to all peers
+        for peer in NODES.iter().filter(|&pid| *pid != *PID) {
+            println!("Requesting database sync from peer {}", peer);
+            self.network.send(*peer, sync_request.clone()).await;
+        }
+        
+        // Wait for responses
+        for _ in 0..5 {
+            time::sleep(Duration::from_millis(500)).await;
+            let messages = self.network.get_received().await;
+            
+            for msg in messages {
+                if let Message::DatabaseSync(entries) = msg {
+                    println!("Received database sync with {} entries", entries.len());
+                    self.database.apply_batch(entries);
+                    return; // Successfully received sync
+                } else {
+                    // Process other messages normally
+                    self.handle_message(msg).await;
+                }
+            }
+        }
+        
+        println!("Did not receive database sync from any peer");
+    }
+    
+    // Handle a single message
+    async fn handle_message(&mut self, msg: Message) {
+        match msg {
+            Message::APIRequest(kv_cmd) => match kv_cmd {
+                KVCommand::Get(key) => {
+                    // Special handling for ping messages
+                    if key == "__ping__" {
+                        println!("Received ping request, responding with pong");
+                        let msg = Message::APIResponse(APIResponse::Get("__ping__".to_string(), Some("__pong__".to_string())));
+                        // Send response to the sender (which is a peer, not the client)
+                        // We need to determine which peer sent this
+                        // For now, broadcast to all peers
+                        for peer in NODES.iter().filter(|&pid| *pid != *PID) {
+                            self.network.send(*peer, msg.clone()).await;
+                        }
+                        // Also send to client for debugging
+                        self.network.send(0, msg).await;
+                    } else if key == "__sync_request__" {
+                        // Handle database sync request
+                        println!("Received database sync request");
+                        let entries = self.database.get_all_entries();
+                        println!("Sending {} entries in database sync", entries.len());
+                        
+                        // Send database sync to all peers (we don't know which one requested it)
+                        let sync_msg = Message::DatabaseSync(entries);
+                        for peer in NODES.iter().filter(|&pid| *pid != *PID) {
+                            self.network.send(*peer, sync_msg.clone()).await;
+                        }
+                    } else {
+                        // Normal GET request
+                        println!("Processing GET request for key: {}", key);
+                        let value = self.database.handle_command(KVCommand::Get(key.clone()));
+                        println!("GET result for key {}: {:?}", key, value);
+                        let msg = Message::APIResponse(APIResponse::Get(key, value));
+                        // Send response to client (0 is the clientID)
+                        self.network.send(0, msg).await;
+                    }
+                }
+                cmd => {
+                    println!("Appending command to log: {:?}", cmd);
+                    
+                    // Try multiple times to append the command to ensure it succeeds
+                    let mut success = false;
+                    for attempt in 1..=3 {
+                        match self.omni_paxos.append(cmd.clone()) {
+                            Ok(_) => {
+                                println!("Successfully appended command to log");
+                                success = true;
+                                break;
+                            }
+                            Err(e) => {
+                                println!("Attempt {}: Failed to append command to log: {:?}", attempt, e);
+                                // Force a tick and sync before retrying
+                                self.omni_paxos.tick();
+                                self.send_outgoing_msgs().await;
+                                time::sleep(Duration::from_millis(100)).await;
+                            }
+                        }
+                    }
+                    
+                    if !success {
+                        println!("WARNING: Failed to append command after multiple attempts");
+                    }
+                    
+                    // Force a tick and send messages to propagate this command
+                    self.omni_paxos.tick();
+                    self.send_outgoing_msgs().await;
+                    
+                    // Immediately check for decided entries to apply this command faster
+                    self.handle_decided_entries().await;
+                }
+            },
+            Message::OmniPaxosMsg(msg) => {
+                println!("Received OmniPaxos message: {:?}", msg);
+                self.omni_paxos.handle_incoming(msg);
+                
+                // Force a tick and send messages to respond to this message
+                self.omni_paxos.tick();
+                self.send_outgoing_msgs().await;
+                
+                // Immediately check for decided entries
+                self.handle_decided_entries().await;
+            },
+            Message::DatabaseSync(entries) => {
+                println!("Received database sync with {} entries", entries.len());
+                self.database.apply_batch(entries);
+                
+                // After applying a database sync, force another sync to ensure we're fully caught up
+                time::sleep(Duration::from_millis(100)).await;
+                self.force_sync().await;
+            },
+            _ => {
+                println!("Received unhandled message type: {:?}", msg);
+            }
         }
     }
 }

@@ -21,6 +21,7 @@ pub(crate) enum Message {
     OmniPaxosMsg(OPMessage<KVCommand>), 
     APIRequest(KVCommand), //Represents a request from a client to the server
     APIResponse(APIResponse), //Represents a response from the server to a client
+    DatabaseSync(HashMap<String, String>), // New message type for database synchronization
 }
 
 //Defining the Network struct

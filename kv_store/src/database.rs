@@ -1,5 +1,6 @@
 use crate::kv::{KVCommand, KeyValue};
-use rocksdb::{Options, DB};
+use rocksdb::{Options, DB, IteratorMode};
+use std::collections::HashMap;
 
 pub struct Database {
     rocks_db: DB,
@@ -56,5 +57,35 @@ impl Database {
         // RocksDB automatically flushes to disk, but we can add explicit flush if needed
         // This is a placeholder for any additional flush logic
         println!("Database flushed to disk");
+    }
+    
+    // Get all key-value pairs from the database
+    pub fn get_all_entries(&self) -> HashMap<String, String> {
+        let mut entries = HashMap::new();
+        let iter = self.rocks_db.iterator(IteratorMode::Start);
+        
+        for item in iter {
+            if let Ok((key, value)) = item {
+                if let (Ok(key_str), Ok(value_str)) = (
+                    String::from_utf8(key.to_vec()),
+                    String::from_utf8(value.to_vec())
+                ) {
+                    // Skip special keys like "__ping__"
+                    if !key_str.starts_with("__") {
+                        entries.insert(key_str, value_str);
+                    }
+                }
+            }
+        }
+        
+        entries
+    }
+    
+    // Apply a batch of key-value pairs to the database
+    pub fn apply_batch(&self, entries: HashMap<String, String>) {
+        println!("Applying batch of {} entries to database", entries.len());
+        for (key, value) in entries {
+            self.put(&key, &value);
+        }
     }
 }
