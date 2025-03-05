@@ -1,3 +1,6 @@
+# -------------------------------
+# ConfigMap for Configuration
+# -------------------------------
 apiVersion: v1
 kind: ConfigMap
 metadata:
@@ -5,7 +8,34 @@ metadata:
 data:
   NODES: "[1, 2, 3]"
   RUST_BACKTRACE: "1"
+
 ---
+# -------------------------------
+# Headless Service for StatefulSet Networking
+# -------------------------------
+apiVersion: v1
+kind: Service
+metadata:
+  name: kv-store
+spec:
+  clusterIP: None  # Headless service for StatefulSet DNS resolution
+  selector:
+    app: kv-store
+  ports:
+    - port: 8001
+      targetPort: 8001
+      name: "8001"
+    - port: 8002
+      targetPort: 8002
+      name: "8002"
+    - port: 8003
+      targetPort: 8003
+      name: "8003"
+
+---
+# -------------------------------
+# Headless Service for Networking (Net)
+# -------------------------------
 apiVersion: v1
 kind: Service
 metadata:
@@ -13,9 +43,9 @@ metadata:
   labels:
     app: net
 spec:
-  clusterIP: None # Headless service, no single IP
+  clusterIP: None
   selector:
-    app: net # This selector needs to match the label of the 'net' pod
+    app: net
   ports:
     - name: "8001"
       port: 8001
@@ -67,6 +97,9 @@ spec:
       name: "8042"
 
 ---
+# -------------------------------
+# Single Pod for Networking (Net)
+# -------------------------------
 apiVersion: v1
 kind: Pod
 metadata:
@@ -91,7 +124,6 @@ spec:
         - containerPort: 8021
         - containerPort: 8032
         - containerPort: 8031
-
       env:
         - name: PORT_MAPPINGS
           value: "[[8013,8031],[8012,8021],[8023,8032], [8014, 8041], [8024, 8042], [8034, 8043]]"
@@ -107,7 +139,11 @@ spec:
             configMapKeyRef:
               name: kv-config
               key: RUST_BACKTRACE
+
 ---
+# -------------------------------
+# StatefulSet for Distributed Database (With Persistent Storage)
+# -------------------------------
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -151,6 +187,7 @@ spec:
           volumeMounts:
             - name: data
               mountPath: /data
+
   volumeClaimTemplates:
     - metadata:
         name: data
@@ -159,3 +196,4 @@ spec:
         resources:
           requests:
             storage: 1Gi
+        storageClassName: standard  # Explicitly defined for clarity
