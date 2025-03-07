@@ -161,7 +161,7 @@ spec:
     spec:
       containers:
         - name: kv-store
-          image: dnagard/kv_store:v4.1
+          image: dnagard/kv_store:v4.8
           imagePullPolicy: Always
           env:
             - name: NODES
