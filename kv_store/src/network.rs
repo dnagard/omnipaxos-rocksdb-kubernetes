@@ -50,6 +50,8 @@ impl Network {
             let mut sockets_lock = self.sockets.lock().await;
             if let Some(writer) = sockets_lock.get_mut(&receiver) {
                 let _ = writer.write_all(&data).await;
+            } else {
+                println!("Warning: No connection to peer {}, message not sent", receiver);
             }
         }
     }
@@ -132,6 +134,7 @@ impl Network {
                                 match reader.read_until(b'\n', &mut data).await {
                                     Ok(0) => {
                                         println!("Connection closed by peer {}", peer);
+                                        sockets_clone.lock().await.remove(&peer);
                                         break;
                                     }
                                     Ok(_) => {
@@ -144,6 +147,7 @@ impl Network {
                                             "Error reading from peer {}: {}. Retrying connection...",
                                             peer, e
                                         );
+                                        sockets_clone.lock().await.remove(&peer);
                                         break;
                                     }
                                 }
