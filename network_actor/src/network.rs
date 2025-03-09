@@ -106,6 +106,7 @@ pub async fn run() {
     let partitions: Arc<Mutex<Vec<(u64, u64, f32)>>> = Arc::new(Mutex::new(vec![]));
     let mut out_channels = HashMap::new();
     for port in PORT_MAPPINGS.keys() {
+        // ! Since we create one sender per port in the port mappings, we may want to create a new sender when the old port is broken (because of a pod crash)
         let (sender, _rec) = broadcast::channel::<Vec<u8>>(10000);
         let sender = Arc::new(sender);
         out_channels.insert(*port, sender.clone());
@@ -129,6 +130,8 @@ pub async fn run() {
                             .unwrap();
                         let (socket, _addr) = listener.accept().await.unwrap();
                         let (reader, mut writer) = socket.into_split();
+                        //! Added debug print statement here to see new connections
+                        println!("New connection on port {}", port);
 
                         // Sender actor
                         let out_channels = out_chans.clone();
@@ -137,7 +140,10 @@ pub async fn run() {
                                 let mut receiver = sender.clone().subscribe();
                                 while let Ok(data) = receiver.recv().await {
                                     let _ = writer.write_all(&data).await;
+                                    // TODO: Should probably handle dropped writer here. This is the link that is probably broken
                                 }
+                                // TODO: Handle dropped sender. How?
+                                // ? Remove from out channels? Drop the reciever subscription?
                             }
                         });
 
@@ -152,10 +158,14 @@ pub async fn run() {
                                         if let Err(_e) =
                                             central_sender.send((port, *mapped_port, data)).await
                                         {
+                                            // ? What does this error check for?
                                             break;
                                         }
                                     }
                                 } else {
+                                    // ! Handled dropped connections by removing them from outchans
+                                    println!("Connection on port {} dropped, removing from out_channels", port);
+                                    ///out_channels.lock().await.remove(&port);
                                     break;
                                 }
                             }

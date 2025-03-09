@@ -6,6 +6,7 @@ use crate::kv::KVCommand;
 use crate::{
     network::{Message, Network},
     OmniPaxosKV,
+    NODES,
     PID as MY_PID,
 };
 use omnipaxos::util::LogEntry;
@@ -117,7 +118,12 @@ impl Server {
 
     async fn debug_heartbeat(&mut self) {
         //Send a debug message to nodes 1, 2, and 3 saying "Heartbeat from node <MY_PID>"
-        for pid in 1..4 {
+        let peers: Vec<u64> = NODES
+            .iter()
+            .filter(|pid| **pid != *MY_PID)
+            .cloned()
+            .collect();
+        for pid in peers {
             let msg = Message::Debug(format!("Heartbeat from node {}", *MY_PID));
             self.network.send(pid, msg).await;
         }
@@ -129,7 +135,7 @@ impl Server {
     pub(crate) async fn run(&mut self) {
         let mut msg_interval = time::interval(Duration::from_millis(1));
         let mut tick_interval = time::interval(Duration::from_millis(10));
-        let mut debug_heartbeat = time::interval(Duration::from_secs(5));
+        let mut debug_heartbeat = time::interval(Duration::from_secs(2));
         loop {
             tokio::select! {
                 biased;
