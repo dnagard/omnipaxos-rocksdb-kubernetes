@@ -11,29 +11,6 @@ data:
 
 ---
 # -------------------------------
-# Headless Service for StatefulSet Networking
-# -------------------------------
-apiVersion: v1
-kind: Service
-metadata:
-  name: kv-store
-spec:
-  clusterIP: None  # Headless service for StatefulSet DNS resolution
-  selector:
-    app: kv-store
-  ports:
-    - port: 8001
-      targetPort: 8001
-      name: "8001"
-    - port: 8002
-      targetPort: 8002
-      name: "8002"
-    - port: 8003
-      targetPort: 8003
-      name: "8003"
-
----
-# -------------------------------
 # Headless Service for Networking (Net)
 # -------------------------------
 apiVersion: v1
@@ -109,7 +86,7 @@ metadata:
 spec:
   containers:
     - name: net
-      image: arejula27/kvs-network-actor:v1.3
+      image: dnagard/net_actor:v1.4
       imagePullPolicy: Always
       stdin: true
       tty: true
@@ -161,7 +138,7 @@ spec:
     spec:
       containers:
         - name: kv-store
-          image: dnagard/kv_store:v4.8
+          image: dnagard/kv_store:v5.0
           imagePullPolicy: Always
           env:
             - name: NODES
