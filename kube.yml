@@ -86,7 +86,7 @@ metadata:
 spec:
   containers:
     - name: net
-      image: dnagard/net_actor:v1.6
+      image: dnagard/net_actor:v2.0
       imagePullPolicy: Always
       stdin: true
       tty: true
@@ -138,7 +138,7 @@ spec:
     spec:
       containers:
         - name: kv-store
-          image: dnagard/kv_store:v5.0
+          image: dnagard/kv_store:v6.10
           imagePullPolicy: Always
           env:
             - name: NODES

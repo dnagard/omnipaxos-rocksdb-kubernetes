@@ -1,4 +1,4 @@
-use crate::kv::{KVCommand, KeyValue};
+use crate::kv::{KVCommand, KeyValue, KVSnapshot};
 use rocksdb::{Options, DB};
 
 pub struct Database {
@@ -11,6 +11,16 @@ impl Database {
         opts.create_if_missing(true);
         let rocks_db = DB::open(&opts, path).unwrap();
         Self { rocks_db }
+    }
+
+    pub fn handle_snapshot(&self, snapshot: KVSnapshot) {
+        println!("Handling snapshot");
+        for (key, value) in snapshot.snapshotted {
+            self.put(&key, &value);
+        }
+        for key in snapshot.deleted_keys {
+            self.delete(&key);
+        }
     }
 
     pub fn handle_command(&self, command: KVCommand) -> Option<String> {

@@ -2,16 +2,25 @@
 
 //Importing the necessary modules and structs
 use crate::database::Database;
-use crate::kv::KVCommand;
+use crate::kv::{
+    KVCommand,
+};
 use crate::{
     network::{Message, Network},
     OmniPaxosKV,
     NODES,
     PID as MY_PID,
 };
-use omnipaxos::util::LogEntry;
+use omnipaxos::{
+    util::LogEntry,
+    util::SnapshottedEntry,
+};
 use serde::{Deserialize, Serialize};
-use std::time::Duration;
+use std::{
+    time::Duration,
+    fs, 
+    path::Path, 
+};
 use tokio::time;
 
 //Defines the types of responses the server can send back to a client
@@ -54,7 +63,13 @@ impl Server {
                     self.omni_paxos.handle_incoming(msg);
                 }, 
                 Message::Debug(msg) => {
-                    println!("Debug: {}", msg);
+                    //println!("Debug: {}", msg);
+                },
+                Message::Reconnect(pid) => {
+                    if self.omni_paxos.get_current_leader().map(|(id, _)| id) != Some(*MY_PID) {
+                        println!("Reconnecting node {}, from {}", pid, *MY_PID);
+                        self.omni_paxos.reconnected(pid);
+                    }
                 },
                 _ => unimplemented!(),
             }
@@ -110,7 +125,10 @@ impl Server {
             match entry {
                 LogEntry::Decided(cmd) => {
                     self.database.handle_command(cmd);
-                }
+                },
+                LogEntry::Snapshotted(SnapshottedEntry { snapshot, .. }) => {
+                    self.database.handle_snapshot(snapshot);
+                },
                 _ => {}
             }
         }
@@ -133,6 +151,24 @@ impl Server {
     //The run method uses tokio::select! to handle multiple asynchronous tasks concurrently.
     //The biased; directive gives priority to the first branch (message processing).
     pub(crate) async fn run(&mut self) {
+        let file_path = "data/restarted.flag";
+
+        if Path::new(file_path).exists() {
+            println!("Restarted");
+            std::thread::sleep(Duration::from_secs(5));
+            println!("After sleep");
+            for pid in NODES.iter().filter(|pid| **pid != *MY_PID) {
+                //self.omni_paxos.seq_paxos.state = {Follower, Recover};
+                //self.omni_paxos.reconnected(*pid);
+                //self.send_outgoing_msgs().await;
+            }
+
+        }else{
+            println!("Not restarted");
+            fs::File::create(file_path).expect("Failed to create restarted flag file");
+        }
+
+
         let mut msg_interval = time::interval(Duration::from_millis(1));
         let mut tick_interval = time::interval(Duration::from_millis(10));
         let mut debug_heartbeat = time::interval(Duration::from_secs(2));
@@ -149,6 +185,16 @@ impl Server {
                 },
                 _ = debug_heartbeat.tick() => {
                     self.debug_heartbeat().await;
+                    let end = self.omni_paxos.get_decided_idx();
+                    if let Some(entries) = self.omni_paxos.read_entries(0..) {
+                        println!("--------");
+                        for entry in entries {
+                            println!("{:?}", entry);
+                        }
+                        println!("--------");
+                    } else {
+                        println!("No entries found in the log or out of bounds.");
+                    }
                 },
                 else => (),
             }
