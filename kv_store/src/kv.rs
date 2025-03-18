@@ -68,6 +68,7 @@ impl Snapshot<KVCommand> for KVSnapshot {
         }
         for k in delta.deleted_keys {
             self.snapshotted.remove(&k);
+            self.deleted_keys.push(k);
         }
         //self.deleted_keys.retain(|k| !self.snapshotted.contains_key(k));
     }
