@@ -6,7 +6,7 @@ kind: ConfigMap
 metadata:
   name: kv-config
 data:
-  NODES: "[1, 2, 3]"
+  NODES: "[1, 2, 3, 4]"
   RUST_BACKTRACE: "1"
 
 ---
@@ -138,7 +138,7 @@ spec:
     spec:
       containers:
         - name: kv-store
-          image: dnagard/kv_store:v7.4
+          image: dnagard/kv_store:v7.5
           imagePullPolicy: Always
           env:
             - name: NODES
