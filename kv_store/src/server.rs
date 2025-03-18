@@ -63,7 +63,13 @@ impl Server {
                     self.omni_paxos.handle_incoming(msg);
                 }, 
                 Message::Debug(msg) => {
-                    //println!("Debug: {}", msg);
+                    if(self.omni_paxos.get_current_leader().map(|(id, _)| id) == Some(*MY_PID)){
+                        //Check if there are more nodes in the cluster than there should be. Maybe hash map with a timeout in for each node in case we scale down? Need to set the timeout quite long in case a node crashes.
+                        //If there are more nodes than in the config, we need to trigger reconnection. can trigger reconnection up to 4 instantly, but timeout on the downwards. 
+                        // TODO: Also need to handle the stopsign message in the other nodes. 
+                        // TODO: Also, need to modify the nodes in the config so that 4 isn't included from the start. But still want the net to listen dynamically for new nodes. 
+                    }
+                    println!("Debug: {}", msg);
                 },
                 Message::Reconnect(pid) => {
                     if self.omni_paxos.get_current_leader().map(|(id, _)| id) != Some(*MY_PID) {

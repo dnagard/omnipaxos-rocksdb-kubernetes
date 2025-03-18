@@ -293,6 +293,7 @@ pub async fn run() {
                 map.get(&to_port).cloned() // Cloning outside of lock
             };
 
+            //TODO: May need to add some asyncrhony here to allow messages to be sent even if a node is down. Otherwise a down node will lock the whole system.
             if let Some(sender) = sender {
                 let _ = sender.send(msg);
                 break;
