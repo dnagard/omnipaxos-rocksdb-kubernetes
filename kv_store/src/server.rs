@@ -37,7 +37,7 @@ pub struct Server {
     pub omni_paxos: OmniPaxosKV, //OmniPaxos instance for the server
     pub network: Network, //Manages sending and receiving messages from other nodes or clients.
     pub database: Database, //Handles the actual storage and retrieval of key-value pairs.
-    pub last_decided_idx: u64, //Tracks the last log entry that was “decided” (i.e., agreed upon by the consensus process) and applied to the database.
+    pub last_decided_idx: u64, //Tracks the last log entry that was "decided" (i.e., agreed upon by the consensus process) and applied to the database.
 }
 
 // Implementing the Server struct
@@ -151,27 +151,14 @@ impl Server {
     //The run method uses tokio::select! to handle multiple asynchronous tasks concurrently.
     //The biased; directive gives priority to the first branch (message processing).
     pub(crate) async fn run(&mut self) {
-        let file_path = "data/restarted.flag";
-
-        if Path::new(file_path).exists() {
-            let own_decided_index = self.omni_paxos.get_decided_idx();
-            self.omni_paxos
-                    .snapshot(Some(own_decided_index), true)
-                    .expect("Failed to snapshot");
-            println!("Restarted");
-            std::thread::sleep(Duration::from_secs(3));
-            println!("After sleep");
-            for pid in NODES.iter().filter(|pid| **pid != *MY_PID) {
-                //self.omni_paxos.seq_paxos.state = {Follower, Recover};
-                //self.omni_paxos.reconnected(*pid);
-                //self.send_outgoing_msgs().await;
+        // Create a longer-lived string to fix the borrow error
+        let path_string = format!("db_{}", *MY_PID);
+        let db_path = Path::new(&path_string).parent();
+        if let Some(parent) = db_path {
+            if !parent.exists() {
+                fs::create_dir_all(parent).expect("Failed to create db directory");
             }
-
-        }else{
-            println!("Not restarted");
-            fs::File::create(file_path).expect("Failed to create restarted flag file");
         }
-
 
         let mut msg_interval = time::interval(Duration::from_millis(1));
         let mut tick_interval = time::interval(Duration::from_millis(10));

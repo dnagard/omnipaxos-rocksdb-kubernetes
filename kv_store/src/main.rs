@@ -1,8 +1,7 @@
 use crate::kv::KVCommand;
 use crate::server::Server;
 use omnipaxos::*;
-use omnipaxos_storage::persistent_storage::{PersistentStorage, PersistentStorageConfig};
-use rocksdb;
+use omnipaxos_storage::memory_storage::MemoryStorage;
 use std::env;
 use tokio;
 
@@ -32,7 +31,7 @@ lazy_static! {
     };
 }
 
-type OmniPaxosKV = OmniPaxos<KVCommand, PersistentStorage<KVCommand>>;
+type OmniPaxosKV = OmniPaxos<KVCommand, MemoryStorage<KVCommand>>;
 
 #[tokio::main]
 async fn main() {
@@ -51,35 +50,16 @@ async fn main() {
         cluster_config,
     };
     
-    // Set storage path for this node (each pod gets its own)
-    let storage_path = format!("/data/omnipaxos_{}", *PID);
-    std::fs::create_dir_all(&storage_path).expect("Failed to create storage directory");
-    
-    // Set RocksDB options (required for persistent storage)
-    let log_store_options = rocksdb::Options::default();
-    let mut state_store_options = rocksdb::Options::default();
-    state_store_options.create_missing_column_families(true); // Ensures required storage structure
-    state_store_options.create_if_missing(true); // Creates DB if missing
-    
-    // Create persistent storage config with options
-    let mut persist_conf = PersistentStorageConfig::default();
-    persist_conf.set_path(storage_path.to_string()); 
-    persist_conf.set_database_options(state_store_options);
-    persist_conf.set_log_options(log_store_options);
-    
-    // Initialize storage using PersistentStorageConfig (Fix: Proper error handling)
-    let storage = PersistentStorage::open(persist_conf);
-
-    // Recover OmniPaxos state from storage
+    // Using MemoryStorage instead of PersistentStorage
     let omni_paxos = op_config
-        .build(storage)
+        .build(MemoryStorage::default())
         .expect("Failed to build OmniPaxos");
     
-    // Ensure database storage also uses /data/
+    // Using a local path instead of /data/ since we're using in-memory storage
     let mut server = Server {
         omni_paxos,
         network: network::Network::new().await,
-        database: database::Database::new(format!("/data/db_{}", *PID).as_str()),
+        database: database::Database::new(format!("db_{}", *PID).as_str()),
         last_decided_idx: 0,
     };
     server.run().await;
