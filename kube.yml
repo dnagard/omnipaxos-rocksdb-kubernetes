@@ -119,7 +119,7 @@ spec:
 
 ---
 # -------------------------------
-# StatefulSet for Distributed Database (With Persistent Storage)
+# StatefulSet for Distributed Database (Without Persistent Storage)
 # -------------------------------
 apiVersion: apps/v1
 kind: StatefulSet
@@ -138,7 +138,7 @@ spec:
     spec:
       containers:
         - name: kv-store
-          image: batuy/kv_store:v1.7
+          image: batuy/kv_store:v1.8
           imagePullPolicy: Always
           env:
             - name: NODES
@@ -161,16 +161,16 @@ spec:
               "export PID=$(echo $POD_NAME | sed 's/[^0-9]*\\([0-9]*\\)$/\\1/')&& PID=$((PID + 1))
               && exec kv_demo",
             ]
-          volumeMounts:
-            - name: data
-              mountPath: /data
+  #         volumeMounts:
+  #           - name: data
+  #             mountPath: /data
 
-  volumeClaimTemplates:
-    - metadata:
-        name: data
-      spec:
-        accessModes: ["ReadWriteOnce"]
-        resources:
-          requests:
-            storage: 1Gi
-        storageClassName: standard # Explicitly defined for clarity
+  # volumeClaimTemplates:
+  #   - metadata:
+  #       name: data
+  #     spec:
+  #       accessModes: ["ReadWriteOnce"]
+  #       resources:
+  #         requests:
+  #           storage: 1Gi
+  #       storageClassName: standard # Explicitly defined for clarity

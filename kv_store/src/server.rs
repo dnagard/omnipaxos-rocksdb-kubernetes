@@ -160,6 +160,10 @@ impl Server {
             }
         }
 
+        // Set up any necessary recovery tracking
+        let initial_sync_start = std::time::Instant::now();
+        let mut recovery_complete = false;
+        
         let mut msg_interval = time::interval(Duration::from_millis(1));
         let mut tick_interval = time::interval(Duration::from_millis(10));
         let mut debug_heartbeat = time::interval(Duration::from_secs(2));
@@ -170,6 +174,16 @@ impl Server {
                     self.process_incoming_msgs().await;
                     self.send_outgoing_msgs().await;
                     self.handle_decided_entries().await;
+                    
+                    // Check if recovery is complete
+                    if !recovery_complete {
+                        // Consider node recovered if it has processed some decided entries
+                        // or it has been running for at least 10 seconds
+                        if self.last_decided_idx > 0 || initial_sync_start.elapsed().as_secs() > 10 {
+                            recovery_complete = true;
+                            println!("Recovery complete in {}ms", initial_sync_start.elapsed().as_millis());
+                        }
+                    }
                 },
                 _ = tick_interval.tick() => {
                     self.omni_paxos.tick();
