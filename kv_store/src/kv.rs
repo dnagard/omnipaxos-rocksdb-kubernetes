@@ -70,7 +70,7 @@ impl Snapshot<KVCommand> for KVSnapshot {
             self.snapshotted.remove(&k);
             self.deleted_keys.push(k);
         }
-        //self.deleted_keys.retain(|k| !self.snapshotted.contains_key(k));
+        self.deleted_keys.retain(|k| !self.snapshotted.contains_key(k));
     }
 
     fn use_snapshots() -> bool {

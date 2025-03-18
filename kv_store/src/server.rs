@@ -103,19 +103,19 @@ impl Server {
             let msg = Message::APIResponse(APIResponse::Decided(new_decided_idx as u64));
             self.network.send(0, msg).await;
             // snapshotting
-            // if new_decided_idx % 5 == 0 {
-            //     println!(
-            //         "Log before: {:?}",
-            //         self.omni_paxos.read_decided_suffix(0).unwrap()
-            //     );
-            //     self.omni_paxos
-            //         .snapshot(Some(new_decided_idx), true)
-            //         .expect("Failed to snapshot");
-            //     println!(
-            //         "Log after: {:?}\n",
-            //         self.omni_paxos.read_decided_suffix(0).unwrap()
-            //     );
-            // }
+            if new_decided_idx % 5 == 0 {
+                println!(
+                    "Log before: {:?}",
+                    self.omni_paxos.read_decided_suffix(0).unwrap()
+                );
+                self.omni_paxos
+                    .snapshot(Some(new_decided_idx), true)
+                    .expect("Failed to snapshot");
+                println!(
+                    "Log after: {:?}\n",
+                    self.omni_paxos.read_decided_suffix(0).unwrap()
+                );
+            }
         }
     }
 
@@ -154,8 +154,12 @@ impl Server {
         let file_path = "data/restarted.flag";
 
         if Path::new(file_path).exists() {
+            let own_decided_index = self.omni_paxos.get_decided_idx();
+            self.omni_paxos
+                    .snapshot(Some(own_decided_index), true)
+                    .expect("Failed to snapshot");
             println!("Restarted");
-            std::thread::sleep(Duration::from_secs(5));
+            std::thread::sleep(Duration::from_secs(3));
             println!("After sleep");
             for pid in NODES.iter().filter(|pid| **pid != *MY_PID) {
                 //self.omni_paxos.seq_paxos.state = {Follower, Recover};
