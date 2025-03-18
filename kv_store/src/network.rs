@@ -18,6 +18,7 @@ pub(crate) enum Message {
     APIRequest(KVCommand),
     APIResponse(APIResponse),
     Debug(String),
+    Reconnect(u64),
 }
 
 pub struct Network {
