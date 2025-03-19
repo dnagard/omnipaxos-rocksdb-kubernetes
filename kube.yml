@@ -138,7 +138,7 @@ spec:
     spec:
       containers:
         - name: kv-store
-          image: batuy/kv_store:v1.8
+          image: batuy/kv_store:memorySnapOff1.1
           imagePullPolicy: Always
           env:
             - name: NODES
