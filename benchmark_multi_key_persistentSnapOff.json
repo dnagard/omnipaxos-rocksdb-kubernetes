@@ -1,0 +1,129 @@
+{
+  "test_config": {
+    "runs": 5,
+    "load_size": 1000,
+    "key_size": 10,
+    "value_size": 100,
+    "pod_killed": "kv-store-2",
+    "single_key": false,
+    "memory_store": false
+  },
+  "results": [
+    {
+      "run": 1,
+      "recovery_time_seconds": 6.466700792312622,
+      "network_traffic": {
+        "kv-store-0": {
+          "rx_bytes": 306612,
+          "tx_bytes": 303036,
+          "total_bytes": 609648
+        },
+        "kv-store-1": {
+          "rx_bytes": 314612,
+          "tx_bytes": 311028,
+          "total_bytes": 625640
+        },
+        "kv-store-2": {
+          "rx_bytes": 319106,
+          "tx_bytes": 315134,
+          "total_bytes": 634240
+        }
+      },
+      "data_size": 110000
+    },
+    {
+      "run": 2,
+      "recovery_time_seconds": 0.06818819046020508,
+      "network_traffic": {
+        "kv-store-0": {
+          "rx_bytes": 32946,
+          "tx_bytes": 32946,
+          "total_bytes": 65892
+        },
+        "kv-store-1": {
+          "rx_bytes": 36339,
+          "tx_bytes": 36271,
+          "total_bytes": 72610
+        },
+        "kv-store-2": {
+          "rx_bytes": 41834,
+          "tx_bytes": 41764,
+          "total_bytes": 83598
+        }
+      },
+      "data_size": 110000
+    },
+    {
+      "run": 3,
+      "recovery_time_seconds": 6.578505992889404,
+      "network_traffic": {
+        "kv-store-0": {
+          "rx_bytes": 330838,
+          "tx_bytes": 327620,
+          "total_bytes": 658458
+        },
+        "kv-store-1": {
+          "rx_bytes": 337252,
+          "tx_bytes": 334166,
+          "total_bytes": 671418
+        },
+        "kv-store-2": {
+          "rx_bytes": 339883,
+          "tx_bytes": 336938,
+          "total_bytes": 676821
+        }
+      },
+      "data_size": 110000
+    },
+    {
+      "run": 4,
+      "recovery_time_seconds": 0.06592488288879395,
+      "network_traffic": {
+        "kv-store-0": {
+          "rx_bytes": 27777,
+          "tx_bytes": 27579,
+          "total_bytes": 55356
+        },
+        "kv-store-1": {
+          "rx_bytes": 34343,
+          "tx_bytes": 34011,
+          "total_bytes": 68354
+        },
+        "kv-store-2": {
+          "rx_bytes": 38188,
+          "tx_bytes": 37988,
+          "total_bytes": 76176
+        }
+      },
+      "data_size": 110000
+    },
+    {
+      "run": 5,
+      "recovery_time_seconds": 11.082937002182007,
+      "network_traffic": {
+        "kv-store-0": {
+          "rx_bytes": 440318,
+          "tx_bytes": 419502,
+          "total_bytes": 859820
+        },
+        "kv-store-1": {
+          "rx_bytes": 448331,
+          "tx_bytes": 427307,
+          "total_bytes": 875638
+        },
+        "kv-store-2": {
+          "rx_bytes": 452790,
+          "tx_bytes": 432098,
+          "total_bytes": 884888
+        }
+      },
+      "data_size": 110000
+    }
+  ],
+  "summary": {
+    "avg_recovery_time_seconds": 4.852451372146606,
+    "min_recovery_time_seconds": 0.06592488288879395,
+    "max_recovery_time_seconds": 11.082937002182007,
+    "avg_network_traffic_bytes": 1383711.4
+  }
+}

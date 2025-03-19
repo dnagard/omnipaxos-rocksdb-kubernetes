@@ -170,21 +170,21 @@ impl Server {
             /*** reply to client with new decided index ***/
             let msg = Message::APIResponse(APIResponse::Decided(new_decided_idx as u64));
             self.network.send(0, msg).await;
-            snapshotting
-            if new_decided_idx % 5 == 0 {
-                println!(
-                    "Log before: {:?}",
-                    self.omni_paxos.read_decided_suffix(0).unwrap()
-                );
-                let snapshot = self.omni_paxos
-                    .snapshot(Some(new_decided_idx), true)
-                    .expect("Failed to snapshot");
-                println!("Snapshot: {:?}", snapshot);
-                println!(
-                    "Log after: {:?}\n",
-                    self.omni_paxos.read_decided_suffix(0).unwrap()
-                );
-            }
+            //snapshotting
+            // if new_decided_idx % 5 == 0 {
+            //     println!(
+            //         "Log before: {:?}",
+            //         self.omni_paxos.read_decided_suffix(0).unwrap()
+            //     );
+            //     let snapshot = self.omni_paxos
+            //         .snapshot(Some(new_decided_idx), true)
+            //         .expect("Failed to snapshot");
+            //     println!("Snapshot: {:?}", snapshot);
+            //     println!(
+            //         "Log after: {:?}\n",
+            //         self.omni_paxos.read_decided_suffix(0).unwrap()
+            //     );
+            // }
         }
     }
 
