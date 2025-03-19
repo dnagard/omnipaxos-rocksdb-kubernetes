@@ -73,6 +73,9 @@ impl Server {
                 Message::OmniPaxosMsg(msg) => {
                     self.omni_paxos.handle_incoming(msg);
                 }, 
+                Message::StateCatchup(snapshot) => {
+                    self.database.handle_snapshot(snapshot);
+                },
                 Message::Debug(msg) => {
                     //Adding reconfiguration check with the heartbeat message 
                     // to occasionally check if a reconnection is needed
@@ -142,7 +145,13 @@ impl Server {
     }
 
     async fn handle_decided_entries(&mut self) {
+        
         let new_decided_idx = self.omni_paxos.get_decided_idx();
+        if (new_decided_idx as u64) < self.last_decided_idx && new_decided_idx == 0{
+            println!("Last decided index: {}, new decided index {}", self.last_decided_idx, new_decided_idx);
+            self.last_decided_idx = 0;
+        }
+        //println!("Decided index: {}", self.last_decided_idx);
         //Check if there are new decided entries
         if self.last_decided_idx < new_decided_idx as u64 {
             let decided_entries = self
@@ -151,7 +160,10 @@ impl Server {
                 .unwrap();
 
             //Upate the database with the decided entries, and save the current latest decided index
-            self.update_database(decided_entries);
+            self.update_database(decided_entries).await;
+            if let Some(StopSign) = self.omni_paxos.is_reconfigured() {
+                return;
+            }
             self.last_decided_idx = new_decided_idx as u64;
             /*** reply to client with new decided index ***/
             let msg = Message::APIResponse(APIResponse::Decided(new_decided_idx as u64));
@@ -162,9 +174,10 @@ impl Server {
                     "Log before: {:?}",
                     self.omni_paxos.read_decided_suffix(0).unwrap()
                 );
-                self.omni_paxos
+                let snapshot = self.omni_paxos
                     .snapshot(Some(new_decided_idx), true)
                     .expect("Failed to snapshot");
+                println!("Snapshot: {:?}", snapshot);
                 println!(
                     "Log after: {:?}\n",
                     self.omni_paxos.read_decided_suffix(0).unwrap()
@@ -174,7 +187,7 @@ impl Server {
     }
 
     //Iterates over decided log entries and applies each command to the database. This is how the state of the database is eventually updated based on the decisions made by the consensus algorithm.
-    fn update_database(&mut self, decided_entries: Vec<LogEntry<KVCommand>>) {
+    async fn update_database(&mut self, decided_entries: Vec<LogEntry<KVCommand>>) {
         for entry in decided_entries {
             match entry {
                 LogEntry::Decided(cmd) => {
@@ -190,6 +203,29 @@ impl Server {
                     if new_configuration.nodes.contains(&MY_PID) {
                         // current configuration has been safely stopped. Start new instance
                         // Set storage path for this node (each pod gets its own)
+
+                        //Create snapshot and send to all nodes to ensure that the new configuration starts from the same state
+                        self.current_num_replicas = new_configuration.nodes.len() as u64;
+                        if self.omni_paxos.get_current_leader().map(|(id, _)| id) == Some(*MY_PID){
+                            let decided_index = self.omni_paxos.get_decided_idx();
+                            self.omni_paxos.snapshot(Some(decided_index), true).expect("Failed to snapshot");
+                            match self.omni_paxos.read(0).unwrap() {
+                                LogEntry::Snapshotted(SnapshottedEntry { snapshot, .. }) => {
+                                    let peers: Vec<u64> = NODES
+                                    .iter()
+                                    .filter(|pid| **pid != *MY_PID)
+                                    .cloned()
+                                    .collect();
+                                    for pid in peers {
+                                        std::thread::sleep(Duration::from_secs(3));
+                                        let msg = Message::StateCatchup(snapshot.clone());
+                                        self.network.send(pid, msg).await;
+                                        println!("Sent snapshot to {}", pid);
+                                    }
+                                },
+                                _ => {}
+                            }
+                        }
                         let storage_path = format!("/data/omnipaxos_{}/config{}", *MY_PID, self.current_config_id);
                         std::fs::create_dir_all(&storage_path).expect("Failed to create storage directory");
                         
@@ -209,7 +245,8 @@ impl Server {
                         let storage = PersistentStorage::open(persist_conf);
                         let new_omnipaxos = new_configuration.build_for_server(self.current_config.clone(), storage).unwrap();
                         self.omni_paxos = new_omnipaxos;
-                        println!("New configuration started");
+                        self.last_decided_idx = 0 as u64;
+                        println!("New configuration started, last decided index: {}", self.last_decided_idx);
                     }
                 },
                 _ => {}

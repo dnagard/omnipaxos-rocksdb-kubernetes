@@ -10,7 +10,7 @@ use tokio::{
     sync::Mutex,
 };
 
-use crate::{kv::KVCommand, server::APIResponse, NODES, PID as MY_PID};
+use crate::{kv::KVCommand, kv::KVSnapshot, server::APIResponse, NODES, PID as MY_PID};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) enum Message {
@@ -18,6 +18,7 @@ pub(crate) enum Message {
     APIRequest(KVCommand),
     APIResponse(APIResponse),
     Debug(String),
+    StateCatchup(KVSnapshot),
     Reconnect(u64),
 }
 

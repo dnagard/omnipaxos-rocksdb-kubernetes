@@ -14,7 +14,7 @@ impl Database {
     }
 
     pub fn handle_snapshot(&self, snapshot: KVSnapshot) {
-        println!("Handling snapshot");
+        println!("Handling snapshot {:?}", snapshot);
         for (key, value) in snapshot.snapshotted {
             self.put(&key, &value);
         }
