@@ -18,6 +18,7 @@ pub(crate) enum Message {
     APIRequest(KVCommand),
     APIResponse(APIResponse),
     Debug(String),
+    StateCatchup(Vec<(String, String)>),
     Reconnect(u64),
 }
 

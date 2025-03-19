@@ -13,6 +13,7 @@ mod database;
 mod kv;
 mod network;
 mod server;
+mod kubernetes;
 
 lazy_static! {
     pub static ref NODES: Vec<u64> = if let Ok(var) = env::var("NODES") {
@@ -41,18 +42,32 @@ async fn main() {
         election_tick_timeout: 5,
         ..Default::default()
     };
+
+    let mut replica_list: Vec<u64> = vec![];
+    let mut num_replicas: u64 = 3;
+    match kubernetes::query_statefulset_replicas().await {
+        Ok(replicas) => {
+            if replicas > 3 {
+                num_replicas = replicas;
+            }
+
+        }
+        Err(e) => eprintln!("Error querying replicas: {}", e),
+    }
+    replica_list = (1..=num_replicas).collect();
+
     let cluster_config = ClusterConfig {
         configuration_id: 1,
-        nodes: (*NODES).clone(),
+        nodes: (*replica_list).to_vec(),
         ..Default::default()
     };
     let op_config = OmniPaxosConfig {
-        server_config,
+        server_config: server_config.clone(),
         cluster_config,
     };
     
     // Set storage path for this node (each pod gets its own)
-    let storage_path = format!("/data/omnipaxos_{}", *PID);
+    let storage_path = format!("/data/omnipaxos_{}/config_1", *PID);
     std::fs::create_dir_all(&storage_path).expect("Failed to create storage directory");
     
     // Set RocksDB options (required for persistent storage)
@@ -81,6 +96,10 @@ async fn main() {
         network: network::Network::new().await,
         database: database::Database::new(format!("/data/db_{}", *PID).as_str()),
         last_decided_idx: 0,
+        current_num_replicas: num_replicas,
+        current_config: server_config.clone(),
+        current_config_id: 1,
+        stop_sign_timeot: 0,
     };
     server.run().await;
 }
