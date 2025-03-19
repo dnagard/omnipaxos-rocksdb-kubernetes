@@ -44,7 +44,7 @@ pub struct Server {
     pub omni_paxos: OmniPaxosKV, //OmniPaxos instance for the server
     pub network: Network, //Manages sending and receiving messages from other nodes or clients.
     pub database: Database, //Handles the actual storage and retrieval of key-value pairs.
-    pub last_decided_idx: u64, //Tracks the last log entry that was “decided” (i.e., agreed upon by the consensus process) and applied to the database.
+    pub last_decided_idx: u64, //Tracks the last log entry that was "decided" (i.e., agreed upon by the consensus process) and applied to the database.
     pub current_num_replicas: u64, //The current number of replicas in the cluster.
     pub current_config: ServerConfig, //The configuration of the server.
     pub current_config_id: u64, //The current configuration ID.
@@ -287,7 +287,9 @@ impl Server {
             std::thread::sleep(Duration::from_secs(3));
             //DEBUG MESSAGE:
             //println!("After sleep");
-
+            
+            // Add this line to signal recovery completion for benchmark detection
+            println!("Recovery complete");
         }else{
             println!("Not restarted");
             fs::File::create(file_path).expect("Failed to create restarted flag file");

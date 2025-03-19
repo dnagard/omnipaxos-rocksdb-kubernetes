@@ -115,7 +115,7 @@ spec:
       targetPort: 8045
     - name: "8051"
       port: 8051
-      targetPort: 8051  
+      targetPort: 8051
     - name: "8052"
       port: 8052
       targetPort: 8052
@@ -139,7 +139,7 @@ metadata:
 spec:
   containers:
     - name: net
-      image: dnagard/net_actor:latest
+      image: batuy/net_actor:v1.8
       imagePullPolicy: Always
       stdin: true
       tty: true
@@ -170,7 +170,9 @@ spec:
         - containerPort: 8051
       env:
         - name: PORT_MAPPINGS
-          value: "[[8012,8021],[8013,8031],[8014, 8041],[8015, 8051],[8023,8032],[8024, 8042],[8025, 8052],[8034, 8043],[8035, 8053],[8045, 8054]]"
+          value:
+            "[[8012,8021],[8013,8031],[8014, 8041],[8015, 8051],[8023,8032],[8024, 8042],[8025,
+            8052],[8034, 8043],[8035, 8053],[8045, 8054]]"
         - name: CLIENT_PORTS
           value: "[8001, 8002, 8003, 8004, 8005]"
         - name: NODES
@@ -205,7 +207,7 @@ spec:
     spec:
       containers:
         - name: kv-store
-          image: dnagard/kv_store:pStoreRec
+          image: batuy/kv_store:v1.8
           imagePullPolicy: Always
           env:
             - name: NODES
@@ -225,7 +227,8 @@ spec:
           command: ["/bin/sh", "-c"]
           args:
             [
-              "export PID=$(echo $POD_NAME | sed 's/[^0-9]*\\([0-9]*\\)$/\\1/') && PID=$((PID + 1)) && exec kv_demo",
+              "export PID=$(echo $POD_NAME | sed 's/[^0-9]*\\([0-9]*\\)$/\\1/') && PID=$((PID + 1))
+              && exec kv_demo",
             ]
           volumeMounts:
             - name: data
@@ -239,4 +242,4 @@ spec:
         resources:
           requests:
             storage: 1Gi
-        storageClassName: standard  # Explicitly defined for clarity
+        storageClassName: standard # Explicitly defined for clarity
