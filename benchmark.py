@@ -16,19 +16,32 @@ parser.add_argument('--key-size', type=int, default=10, help='Size of keys in by
 parser.add_argument('--value-size', type=int, default=100, help='Size of values in bytes')
 parser.add_argument('--output', type=str, default='benchmark_results.json', help='Output file for results')
 parser.add_argument('--pod-to-kill', type=str, default='kv-store-2', help='Pod to kill for recovery test')
+parser.add_argument('--single-key', action='store_true', help='Use a single key with multiple updates')
+parser.add_argument('--memory-store', action='store_true', help='Use in-memory storage (no persistence)')
 args = parser.parse_args()
 
 # Initialize Kubernetes client
 config.load_kube_config()
 v1 = client.CoreV1Api()
 
-def generate_workload(num_entries, key_size, value_size):
-    """Generate a workload of PUT operations"""
+def generate_workload(num_entries, key_size, value_size, single_key=False):
+    """Generate a workload of PUT operations
+    
+    If single_key is True, will update the same key multiple times
+    """
     workload = []
-    for i in range(num_entries):
-        key = f"key{i:0{key_size-3}d}"[:key_size]  # Ensure key size
-        value = f"value{i:0{value_size-5}d}"[:value_size]  # Ensure value size
-        workload.append(f"put {key} {value}")
+    if single_key:
+        # For single key case, use the same key but different values
+        key = f"key{'0'*(key_size-3)}"[:key_size]  # Single consistent key
+        for i in range(num_entries):
+            value = f"value{i:0{value_size-5}d}"[:value_size]  # Different values
+            workload.append(f"put {key} {value}")
+    else:
+        # Original implementation for multiple keys
+        for i in range(num_entries):
+            key = f"key{i:0{key_size-3}d}"[:key_size]  # Ensure key size
+            value = f"value{i:0{value_size-5}d}"[:value_size]  # Ensure value size
+            workload.append(f"put {key} {value}")
     return workload
 
 def execute_command(cmd):
@@ -118,7 +131,7 @@ def benchmark_recovery():
         print(f"\n=== Run {run+1}/{args.runs} ===")
         
         # Generate and load data
-        workload = generate_workload(args.load, args.key_size, args.value_size)
+        workload = generate_workload(args.load, args.key_size, args.value_size, args.single_key)
         load_data(workload)
         
         # Verify data was loaded
@@ -245,7 +258,9 @@ def generate_report(results):
             "load_size": args.load,
             "key_size": args.key_size,
             "value_size": args.value_size,
-            "pod_killed": args.pod_to_kill
+            "pod_killed": args.pod_to_kill,
+            "single_key": args.single_key,
+            "memory_store": args.memory_store
         },
         "results": results,
         "summary": {
@@ -256,11 +271,20 @@ def generate_report(results):
         }
     }
     
+    # File naming to include test type
+    test_type = "single_key" if args.single_key else "multi_key"
+    storage_type = "memory" if args.memory_store else "persistent"
+    output_file = f"benchmark_{test_type}_{storage_type}.json"
+    
     # Save report
-    with open(args.output, 'w') as f:
+    with open(output_file, 'w') as f:
         json.dump(report, f, indent=2)
     
-    print(f"\nBenchmark report saved to {args.output}")
+    print(f"\nBenchmark report saved to {output_file}")
+    
+    # Graph title adjustment to show test type
+    title_suffix = " (Single Key)" if args.single_key else f" ({args.load} Keys)"
+    title_suffix += " - Memory Storage" if args.memory_store else " - Persistent Storage"
     
     # Create visualization
     plt.figure(figsize=(12, 6))
@@ -271,7 +295,7 @@ def generate_report(results):
     plt.axhline(y=avg_recovery_time, color='r', linestyle='-', label=f'Avg: {avg_recovery_time:.2f}s')
     plt.xlabel('Run')
     plt.ylabel('Recovery Time (seconds)')
-    plt.title('Recovery Time per Run')
+    plt.title(f'Recovery Time per Run{title_suffix}')
     plt.legend()
     
     # Network traffic plot
@@ -281,12 +305,12 @@ def generate_report(results):
                 label=f'Avg: {avg_total_bytes/1024/1024:.2f} MB')
     plt.xlabel('Run')
     plt.ylabel('Network Traffic (MB)')
-    plt.title('Network Traffic per Run')
+    plt.title(f'Network Traffic per Run{title_suffix}')
     plt.legend()
     
     plt.tight_layout()
-    plt.savefig(f"{args.output.split('.')[0]}.png")
-    print(f"Visualization saved to {args.output.split('.')[0]}.png")
+    plt.savefig(f"{output_file.split('.')[0]}.png")
+    print(f"Visualization saved to {output_file.split('.')[0]}.png")
 
 if __name__ == "__main__":
     results = benchmark_recovery()

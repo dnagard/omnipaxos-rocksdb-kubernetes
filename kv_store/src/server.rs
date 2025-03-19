@@ -170,7 +170,7 @@ impl Server {
             /*** reply to client with new decided index ***/
             let msg = Message::APIResponse(APIResponse::Decided(new_decided_idx as u64));
             self.network.send(0, msg).await;
-            // snapshotting
+            snapshotting
             if new_decided_idx % 5 == 0 {
                 println!(
                     "Log before: {:?}",
