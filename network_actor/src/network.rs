@@ -4,7 +4,7 @@ use std::{
     fmt,
     io::{stdout, Write},
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 use tokio::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
@@ -43,7 +43,7 @@ pub async fn run() {
                                 break;
                             }
                             if let Ok(msg) = serde_json::from_slice::<Message>(&data) {
-                                println!("From {}: {:?}", port, msg); // TODO: handle APIResponse
+                                println!("From {}: {:?}", port, msg); 
                             }
                         }
                     });
@@ -149,11 +149,13 @@ pub async fn run() {
                         let mut writer = writer;
                         while let Ok(data) = rx.recv().await {
                             if let Err(e) = writer.write_all(&data).await {
-                                println!("Error writing to port {}: {:?}", port, e);
+                                //DEBUG MESSAGE:
+                                //println!("Error writing to port {}: {:?}", port, e);
                                 break;
                             }
                         }
-                        println!("Sender actor finished for port {}", port);
+                        //DEBUG MESSAGE:
+                        //println!("Sender actor finished for port {}", port);
                     }
                 });
 
@@ -172,27 +174,32 @@ pub async fn run() {
                             Ok(_) => {
                                 if let Some(mapped_port) = PORT_MAPPINGS.get(&port) {
                                     if let Err(e) = central_sender_clone.send((port, *mapped_port, data)).await {
-                                        println!("Error sending from central sender on port {}: {:?}", port, e);
+                                        //DEBUG MESSAGE:
+                                        //println!("Error sending from central sender on port {}: {:?}", port, e);
                                         break;
                                     }
                                 }
                             }
                             Err(e) => {
-                                println!("Error reading from port {}: {:?}", port, e);
+                                //DEBUG MESSAGE:
+                                //println!("Error reading from port {}: {:?}", port, e);
                                 break;
                             }
                         }
                     }
-                    println!("Receiver actor finished for port {}", port);
+                    //DEBUG MESSAGE:
+                    //println!("Receiver actor finished for port {}", port);
                 });
 
                 // Wait until either the sender or receiver task completes.
                 tokio::select! {
                     _ = sender_task => {
-                        println!("Sender task finished for port {}. Cancelling receiver task...", port);
+                        //DEBUG MESSAGE:
+                        //println!("Sender task finished for port {}. Cancelling receiver task...", port);
                     },
                     _ = receiver_task => {
-                        println!("Receiver task finished for port {}. Cancelling sender task...", port);
+                        //DEBUG MESSAGE:
+                        //println!("Receiver task finished for port {}. Cancelling sender task...", port);
                     }
                 }
 
@@ -207,77 +214,6 @@ pub async fn run() {
         });
     }
 
-    // // setup intra-cluster communication
-    // let partitions: Arc<Mutex<Vec<(u64, u64, f32)>>> = Arc::new(Mutex::new(vec![]));
-    // let mut out_channels = HashMap::new();
-    // for port in PORT_MAPPINGS.keys() {
-    //     let (sender, _rec) = broadcast::channel::<Vec<u8>>(10000);
-    //     let sender = Arc::new(sender);
-    //     out_channels.insert(*port, sender.clone());
-    // }
-    // let out_channels = Arc::new(out_channels);
-
-    // let (central_sender, mut central_receiver) = mpsc::channel(10000);
-    // let central_sender = Arc::new(central_sender);
-
-    // for port in PORT_MAPPINGS.keys() {
-    //     let out_chans = out_channels.clone();
-    //     let central_sender = central_sender.clone();
-    //     tokio::spawn(async move {
-    //         while true {
-    //             let join_handler = tokio::spawn({
-    //                 let central_sender = central_sender.clone(); // Clone inside the loop
-    //                 let out_chans = out_chans.clone(); // Clone inside the loop
-    //                 async move {
-    //                     let listener = TcpListener::bind(format!("0.0.0.0:{}", port))
-    //                         .await
-    //                         .unwrap();
-    //                     let (socket, _addr) = listener.accept().await.unwrap();
-    //                     let (reader, mut writer) = socket.into_split();
-    //                     println!("Connected to port {}", port);
-
-    //                     // Sender actor
-    //                     let out_channels = out_chans.clone();
-    //                     tokio::spawn(async move {
-    //                         if let Some(sender) = out_channels.get(&port) {
-    //                             let mut receiver = sender.clone().subscribe();
-    //                             while let Ok(data) = receiver.recv().await {
-    //                                 let _ = writer.write_all(&data).await;
-    //                             }
-    //                             println!("Disconnected from port {} (sender actor)", port);
-    //                             out_channels.remove(&port);
-    //                         }
-    //                     });
-
-    //                     // Receiver actor
-    //                     let central_sender = central_sender.clone();
-    //                     let join_reader = tokio::spawn(async move {
-    //                         let mut reader = BufReader::new(reader);
-    //                         loop {
-    //                             let mut data = vec![];
-    //                             if let Ok(_) = reader.read_until(b'\n', &mut data).await {
-    //                                 if let Some(mapped_port) = PORT_MAPPINGS.get(&port) {
-    //                                     if let Err(_e) =
-    //                                         central_sender.send((port, *mapped_port, data)).await
-    //                                     {
-    //                                         break;
-    //                                     }
-    //                                 }
-    //                             } else {
-    //                                 println!("Disconnected from port {} (receiver actor)", port);
-    //                                 break;
-    //                             }
-    //                         }
-    //                     });
-    //                     join_reader.await.unwrap();
-    //                 }
-    //             });
-
-    //             join_handler.await.unwrap();
-    //         }
-    //     });
-    // }
-
     // the one central actor that sees all messages
     while let Some((from_port, to_port, msg)) = central_receiver.recv().await {
         // drop message if network is partitioned between sender and receiver
@@ -287,23 +223,43 @@ pub async fn run() {
             }
         }
 
+        let start_time = Instant::now();
+        
+        {
+        let map = out_channels.lock().await;
+        if !map.contains_key(&to_port) {
+            //DEBUG MESSAGE:
+            // println!(
+            //     "Destination {} not in out_channels (node likely disconnected). Skipping message.",
+            //     to_port
+            // );
+            continue;
+        }
+    }
+
         loop {
             let sender = {
                 let map = out_channels.lock().await;
                 map.get(&to_port).cloned() // Cloning outside of lock
             };
 
-            //TODO: May need to add some asyncrhony here to allow messages to be sent even if a node is down. Otherwise a down node will lock the whole system.
             if let Some(sender) = sender {
                 let _ = sender.send(msg);
                 break;
             }
+
+            // Check if we've been waiting longer than our threshold, drop message if so.
+            if start_time.elapsed() > Duration::from_secs(5) {
+                //DEBUG MESSAGE:
+                // println!(
+                //     "Destination {} has been down for over 5 seconds. Skipping message.",
+                //     to_port
+                // );
+                break; // Skip the message after 5 seconds.
+            }   
             
             sleep(Duration::from_millis(100)).await;
         }
-
-        //let sender = out_channels.lock().await.get(&to_port).unwrap().clone();
-        // let _ = sender.send(msg);
     }
 }
 

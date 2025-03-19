@@ -73,8 +73,9 @@ impl Server {
                 Message::OmniPaxosMsg(msg) => {
                     self.omni_paxos.handle_incoming(msg);
                 }, 
-                Message::StateCatchup(snapshot) => {
-                    self.database.handle_snapshot(snapshot);
+                Message::StateCatchup(KV_list) => {
+                    println!("Received state catchup message");
+                    self.database.handle_kv(KV_list);
                 },
                 Message::Debug(msg) => {
                     //Adding reconfiguration check with the heartbeat message 
@@ -120,7 +121,8 @@ impl Server {
                             }
                         }
                     }
-                    println!("Debug: {}", msg);
+                    //Uncomment this to see what nodes are connected to this one via debug messages.
+                    //println!("Debug: {}", msg);
                 },
                 Message::Reconnect(pid) => {
                     if self.omni_paxos.get_current_leader().map(|(id, _)| id) != Some(*MY_PID) {
@@ -148,7 +150,7 @@ impl Server {
         
         let new_decided_idx = self.omni_paxos.get_decided_idx();
         if (new_decided_idx as u64) < self.last_decided_idx && new_decided_idx == 0{
-            println!("Last decided index: {}, new decided index {}", self.last_decided_idx, new_decided_idx);
+            println!("Last decided index: {}, new decided index {}. Resetting because reconfigured", self.last_decided_idx, new_decided_idx);
             self.last_decided_idx = 0;
         }
         //println!("Decided index: {}", self.last_decided_idx);
@@ -161,7 +163,7 @@ impl Server {
 
             //Upate the database with the decided entries, and save the current latest decided index
             self.update_database(decided_entries).await;
-            if let Some(StopSign) = self.omni_paxos.is_reconfigured() {
+            if let Some(_StopSign) = self.omni_paxos.is_reconfigured() {
                 return;
             }
             self.last_decided_idx = new_decided_idx as u64;
@@ -205,54 +207,57 @@ impl Server {
                         // Set storage path for this node (each pod gets its own)
 
                         //Create snapshot and send to all nodes to ensure that the new configuration starts from the same state
-                        self.current_num_replicas = new_configuration.nodes.len() as u64;
-                        if self.omni_paxos.get_current_leader().map(|(id, _)| id) == Some(*MY_PID){
-                            let decided_index = self.omni_paxos.get_decided_idx();
-                            self.omni_paxos.snapshot(Some(decided_index), true).expect("Failed to snapshot");
-                            match self.omni_paxos.read(0).unwrap() {
-                                LogEntry::Snapshotted(SnapshottedEntry { snapshot, .. }) => {
-                                    let peers: Vec<u64> = NODES
-                                    .iter()
-                                    .filter(|pid| **pid != *MY_PID)
-                                    .cloned()
-                                    .collect();
-                                    for pid in peers {
-                                        std::thread::sleep(Duration::from_secs(3));
-                                        let msg = Message::StateCatchup(snapshot.clone());
-                                        self.network.send(pid, msg).await;
-                                        println!("Sent snapshot to {}", pid);
-                                    }
-                                },
-                                _ => {}
-                            }
+                        // Use the same path used when creating the database instance.
+                       
+                        let kv_pairs = self.database.get_all_key_values()
+                            .expect("Failed to get key-value pairs from RocksDB");
+
+                        let peers: Vec<u64> = NODES
+                            .iter()
+                            .filter(|pid| **pid != *MY_PID)
+                            .cloned()
+                            .collect();
+
+                        for pid in peers {
+                            // Use nonblocking sleep (Tokio's sleep) to avoid blocking the async executor.
+                            std::thread::sleep(Duration::from_secs(3));
+                            let msg = Message::StateCatchup(kv_pairs.clone());
+                            self.network.send(pid, msg).await;
+                            println!("Sent KV state to {}", pid);
                         }
-                        let storage_path = format!("/data/omnipaxos_{}/config{}", *MY_PID, self.current_config_id);
-                        std::fs::create_dir_all(&storage_path).expect("Failed to create storage directory");
-                        
-                        // Set RocksDB options (required for persistent storage)
-                        let log_store_options = rocksdb::Options::default();
-                        let mut state_store_options = rocksdb::Options::default();
-                        state_store_options.create_missing_column_families(true); // Ensures required storage structure
-                        state_store_options.create_if_missing(true); // Creates DB if missing
-                        
-                        // Create persistent storage config with options
-                        let mut persist_conf = PersistentStorageConfig::default();
-                        persist_conf.set_path(storage_path.to_string()); 
-                        persist_conf.set_database_options(state_store_options);
-                        persist_conf.set_log_options(log_store_options);
-                        
-                        // Initialize storage using PersistentStorageConfig (Fix: Proper error handling)
-                        let storage = PersistentStorage::open(persist_conf);
-                        let new_omnipaxos = new_configuration.build_for_server(self.current_config.clone(), storage).unwrap();
-                        self.omni_paxos = new_omnipaxos;
-                        self.last_decided_idx = 0 as u64;
-                        println!("New configuration started, last decided index: {}", self.last_decided_idx);
                     }
+
+                    //Set up the persistent storage again for the new configuration
+                    let storage_path = format!("/data/omnipaxos_{}/config{}", *MY_PID, self.current_config_id);
+                    std::fs::create_dir_all(&storage_path).expect("Failed to create storage directory");
+                    
+                    // Set RocksDB options (required for persistent storage)
+                    let log_store_options = rocksdb::Options::default();
+                    let mut state_store_options = rocksdb::Options::default();
+                    state_store_options.create_missing_column_families(true); // Ensures required storage structure
+                    state_store_options.create_if_missing(true); // Creates DB if missing
+                    
+                    // Create persistent storage config with options
+                    let mut persist_conf = PersistentStorageConfig::default();
+                    persist_conf.set_path(storage_path.to_string()); 
+                    persist_conf.set_database_options(state_store_options);
+                    persist_conf.set_log_options(log_store_options);
+                    
+                    // Initialize storage using PersistentStorageConfig (Fix: Proper error handling)
+                    let storage = PersistentStorage::open(persist_conf);
+                    println!(
+                    "Final log of this sequence paxos: {:?}\n",
+                    self.omni_paxos.read_decided_suffix(0).unwrap()
+                    );
+                    let new_omnipaxos = new_configuration.build_for_server(self.current_config.clone(), storage).unwrap();
+                    self.omni_paxos = new_omnipaxos;
+                    self.last_decided_idx = 0 as u64;
+                    println!("New configuration started");
                 },
                 _ => {}
             }
         }
-    }
+    }   
 
     async fn debug_heartbeat(&mut self) {
         //Send a debug message to nodes 1, 2, and 3 saying "Heartbeat from node <MY_PID>"
@@ -280,12 +285,8 @@ impl Server {
                     .expect("Failed to snapshot");
             println!("Restarted");
             std::thread::sleep(Duration::from_secs(3));
-            println!("After sleep");
-            // for pid in NODES.iter().filter(|pid| **pid != *MY_PID) {
-            //     //self.omni_paxos.seq_paxos.state = {Follower, Recover};
-            //     //self.omni_paxos.reconnected(*pid);
-            //     //self.send_outgoing_msgs().await;
-            // }
+            //DEBUG MESSAGE:
+            //println!("After sleep");
 
         }else{
             println!("Not restarted");
@@ -316,7 +317,7 @@ impl Server {
                         }
                         println!("--------");
                     } else {
-                        println!("No entries found in the log or out of bounds.");
+                        println!("No entries found in the log yet.");
                     }
                 },
                 else => (),

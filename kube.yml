@@ -35,7 +35,7 @@ kind: ConfigMap
 metadata:
   name: kv-config
 data:
-  NODES: "[1, 2, 3, 4]"
+  NODES: "[1, 2, 3, 4, 5]"
   RUST_BACKTRACE: "1"
 
 ---
@@ -74,6 +74,9 @@ spec:
     - name: "8014"
       port: 8014
       targetPort: 8014
+    - name: "8015"
+      port: 8015
+      targetPort: 8015
     - name: "8023"
       port: 8023
       targetPort: 8023
@@ -83,6 +86,9 @@ spec:
     - name: "8024"
       port: 8024
       targetPort: 8024
+    - name: "8025"
+      port: 8025
+      targetPort: 8025
     - name: "8032"
       port: 8032
       targetPort: 8032
@@ -92,6 +98,9 @@ spec:
     - name: "8034"
       port: 8034
       targetPort: 8034
+    - name: "8035"
+      port: 8035
+      targetPort: 8035
     - name: "8043"
       port: 8043
       targetPort: 8043
@@ -101,6 +110,21 @@ spec:
     - name: "8042"
       port: 8042
       targetPort: 8042
+    - name: "8045"
+      port: 8045
+      targetPort: 8045
+    - name: "8051"
+      port: 8051
+      targetPort: 8051  
+    - name: "8052"
+      port: 8052
+      targetPort: 8052
+    - name: "8053"
+      port: 8053
+      targetPort: 8053
+    - name: "8054"
+      port: 8054
+      targetPort: 8054
 
 ---
 # -------------------------------
@@ -115,7 +139,7 @@ metadata:
 spec:
   containers:
     - name: net
-      image: dnagard/net_actor:v2.0
+      image: dnagard/net_actor:latest
       imagePullPolicy: Always
       stdin: true
       tty: true
@@ -124,17 +148,31 @@ spec:
         - containerPort: 8002
         - containerPort: 8003
         - containerPort: 8004
+        - containerPort: 8015
+        - containerPort: 8014
         - containerPort: 8013
         - containerPort: 8012
+        - containerPort: 8025
+        - containerPort: 8024
         - containerPort: 8023
         - containerPort: 8021
+        - containerPort: 8035
+        - containerPort: 8034
         - containerPort: 8032
         - containerPort: 8031
+        - containerPort: 8045
+        - containerPort: 8043
+        - containerPort: 8042
+        - containerPort: 8041
+        - containerPort: 8054
+        - containerPort: 8053
+        - containerPort: 8052
+        - containerPort: 8051
       env:
         - name: PORT_MAPPINGS
-          value: "[[8013,8031],[8012,8021],[8023,8032], [8014, 8041], [8024, 8042], [8034, 8043]]"
+          value: "[[8012,8021],[8013,8031],[8014, 8041],[8015, 8051],[8023,8032],[8024, 8042],[8025, 8052],[8034, 8043],[8035, 8053],[8045, 8054]]"
         - name: CLIENT_PORTS
-          value: "[8001, 8002, 8003, 8004]"
+          value: "[8001, 8002, 8003, 8004, 8005]"
         - name: NODES
           valueFrom:
             configMapKeyRef:
@@ -167,7 +205,7 @@ spec:
     spec:
       containers:
         - name: kv-store
-          image: dnagard/kv_store:v7.11
+          image: dnagard/kv_store:pStoreRec
           imagePullPolicy: Always
           env:
             - name: NODES
