@@ -3,7 +3,7 @@
 This project implements a **distributed key–value store** running on Kubernetes. It uses **OmniPaxos** for consensus, ensuring that every change is applied uniformly across all server nodes. The system leverages Kubernetes StatefulSets for managing kv-store pods, along with persistent storage via RocksDB and PersistentVolumeClaims, to support automatic fail recovery and dynamic scaling (reconfiguration) of the cluster.
 
 It was implemented as the final project for the Distributed Systems Advanced Course at KTH (ID2203) VT25.  
-Developed by [Daniel Nagard](https://github.com/dnagard) and [Batuhan Ylidrim](https://github.com/Batuhanyldirim).
+Developed by [Daniel Nagard](https://github.com/dnagard) and [Batuhan Yıldırım](https://github.com/Batuhanyldirim).
 
 ---
 
