@@ -10,10 +10,16 @@ use crate::{
     OmniPaxosKV,
     NODES,
     PID as MY_PID,
+    kubernetes::query_statefulset_replicas,
 };
 use omnipaxos::{
     util::LogEntry,
     util::SnapshottedEntry,
+    ServerConfig,
+    ClusterConfig,
+};
+use omnipaxos_storage::{
+    persistent_storage::{PersistentStorage, PersistentStorageConfig},
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -22,6 +28,7 @@ use std::{
     path::Path, 
 };
 use tokio::time;
+
 
 //Defines the types of responses the server can send back to a client
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -38,6 +45,10 @@ pub struct Server {
     pub network: Network, //Manages sending and receiving messages from other nodes or clients.
     pub database: Database, //Handles the actual storage and retrieval of key-value pairs.
     pub last_decided_idx: u64, //Tracks the last log entry that was “decided” (i.e., agreed upon by the consensus process) and applied to the database.
+    pub current_num_replicas: u64, //The current number of replicas in the cluster.
+    pub current_config: ServerConfig, //The configuration of the server.
+    pub current_config_id: u64, //The current configuration ID.
+    pub stop_sign_timeot: u64, //A timeout checker for stop sign messages.
 }
 
 // Implementing the Server struct
@@ -63,11 +74,48 @@ impl Server {
                     self.omni_paxos.handle_incoming(msg);
                 }, 
                 Message::Debug(msg) => {
-                    if(self.omni_paxos.get_current_leader().map(|(id, _)| id) == Some(*MY_PID)){
-                        //Check if there are more nodes in the cluster than there should be. Maybe hash map with a timeout in for each node in case we scale down? Need to set the timeout quite long in case a node crashes.
-                        //If there are more nodes than in the config, we need to trigger reconnection. can trigger reconnection up to 4 instantly, but timeout on the downwards. 
+                    //Adding reconfiguration check with the heartbeat message 
+                    // to occasionally check if a reconnection is needed
+                    if self.omni_paxos.get_current_leader().map(|(id, _)| id) == Some(*MY_PID){
+                        //Only leader is checking for reconfiguration. Saves resources and API calls.
+                        if let Ok(active_replicas) = query_statefulset_replicas().await {
+                            if self.current_num_replicas != active_replicas {
+                                if self.stop_sign_timeot % 5 == 0 {
+                                    self.stop_sign_timeot = 0;
+                                } else {
+                                    self.stop_sign_timeot+=1;
+                                    println!("Debug: {}, increasing timeout", msg);
+                                    continue;
+                                }
+                                println!(
+                                    "Replica count changed from {} to {}",
+                                    self.current_num_replicas, active_replicas
+                                );
+                                self.current_num_replicas = active_replicas;
+                                let replica_list: Vec<u64> = (1..=active_replicas).collect();
+                                //TODO: Trigger reconfiguration here
+                                let new_config_id = (self.current_config_id + 1) as u32;
+                                let new_configuration = ClusterConfig {
+                                    configuration_id: new_config_id,
+                                    nodes: (*replica_list).to_vec(),
+                                    ..Default::default()
+                                };
+                                let metadata = None;
+                                self.omni_paxos.reconfigure(new_configuration, metadata).expect("Failed to propose reconfiguration");
+                            }
+                        }
                         // TODO: Also need to handle the stopsign message in the other nodes. 
-                        // TODO: Also, need to modify the nodes in the config so that 4 isn't included from the start. But still want the net to listen dynamically for new nodes. 
+                        //  TODO: Modify the multiplexer to have multithreaded sending capabilities. Avoids blocking on a dead node.
+                    }else{
+                        if let Ok(active_replicas) = query_statefulset_replicas().await {
+                            if self.current_num_replicas != active_replicas {
+                                println!(
+                                    "Replica count changed from {} to {}",
+                                    self.current_num_replicas, active_replicas
+                                );
+                                self.current_num_replicas = active_replicas;
+                            }
+                        }
                     }
                     println!("Debug: {}", msg);
                 },
@@ -126,7 +174,7 @@ impl Server {
     }
 
     //Iterates over decided log entries and applies each command to the database. This is how the state of the database is eventually updated based on the decisions made by the consensus algorithm.
-    fn update_database(&self, decided_entries: Vec<LogEntry<KVCommand>>) {
+    fn update_database(&mut self, decided_entries: Vec<LogEntry<KVCommand>>) {
         for entry in decided_entries {
             match entry {
                 LogEntry::Decided(cmd) => {
@@ -134,6 +182,35 @@ impl Server {
                 },
                 LogEntry::Snapshotted(SnapshottedEntry { snapshot, .. }) => {
                     self.database.handle_snapshot(snapshot);
+                },
+                LogEntry::StopSign(stopsign, true) => {
+                    self.current_config_id += 1;
+                    let new_configuration = stopsign.next_config;
+                    println!("New configuration: {:?}", new_configuration);
+                    if new_configuration.nodes.contains(&MY_PID) {
+                        // current configuration has been safely stopped. Start new instance
+                        // Set storage path for this node (each pod gets its own)
+                        let storage_path = format!("/data/omnipaxos_{}/config{}", *MY_PID, self.current_config_id);
+                        std::fs::create_dir_all(&storage_path).expect("Failed to create storage directory");
+                        
+                        // Set RocksDB options (required for persistent storage)
+                        let log_store_options = rocksdb::Options::default();
+                        let mut state_store_options = rocksdb::Options::default();
+                        state_store_options.create_missing_column_families(true); // Ensures required storage structure
+                        state_store_options.create_if_missing(true); // Creates DB if missing
+                        
+                        // Create persistent storage config with options
+                        let mut persist_conf = PersistentStorageConfig::default();
+                        persist_conf.set_path(storage_path.to_string()); 
+                        persist_conf.set_database_options(state_store_options);
+                        persist_conf.set_log_options(log_store_options);
+                        
+                        // Initialize storage using PersistentStorageConfig (Fix: Proper error handling)
+                        let storage = PersistentStorage::open(persist_conf);
+                        let new_omnipaxos = new_configuration.build_for_server(self.current_config.clone(), storage).unwrap();
+                        self.omni_paxos = new_omnipaxos;
+                        println!("New configuration started");
+                    }
                 },
                 _ => {}
             }
@@ -167,11 +244,11 @@ impl Server {
             println!("Restarted");
             std::thread::sleep(Duration::from_secs(3));
             println!("After sleep");
-            for pid in NODES.iter().filter(|pid| **pid != *MY_PID) {
-                //self.omni_paxos.seq_paxos.state = {Follower, Recover};
-                //self.omni_paxos.reconnected(*pid);
-                //self.send_outgoing_msgs().await;
-            }
+            // for pid in NODES.iter().filter(|pid| **pid != *MY_PID) {
+            //     //self.omni_paxos.seq_paxos.state = {Follower, Recover};
+            //     //self.omni_paxos.reconnected(*pid);
+            //     //self.send_outgoing_msgs().await;
+            // }
 
         }else{
             println!("Not restarted");
@@ -195,7 +272,6 @@ impl Server {
                 },
                 _ = debug_heartbeat.tick() => {
                     self.debug_heartbeat().await;
-                    let end = self.omni_paxos.get_decided_idx();
                     if let Some(entries) = self.omni_paxos.read_entries(0..) {
                         println!("--------");
                         for entry in entries {
