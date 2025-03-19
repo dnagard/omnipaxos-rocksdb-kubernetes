@@ -225,6 +225,7 @@ The CLI prints connection events, responses (such as the latest decision index),
   - `dnagard/net_actor:latest`  
     Use this image for the network actor.
 - These prebuilt, multiplatform images are particularly useful for running on Apple Silicon where build times are very long. You can build from source if desired, but these images offer a quick start.
+- **To test with in-memory storage, use the build on the [persistentDeactivated](https://github.com/dnagard/omnipaxos-rocksdb-kubernetes/tree/persistentDeactivated) branch. This branch does not have scaling implemented, however.**. 
 
 ### Troubleshooting
 
