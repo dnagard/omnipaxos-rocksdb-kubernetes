@@ -1,4 +1,33 @@
 # -------------------------------
+# RBAC Configuration for StatefulSets Access
+# -------------------------------
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: statefulset-reader
+  namespace: default
+rules:
+  - apiGroups: ["apps"]
+    resources: ["statefulsets"]
+    verbs: ["get", "list", "watch"]
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: statefulset-reader-binding
+  namespace: default
+subjects:
+  - kind: ServiceAccount
+    name: default
+    namespace: default
+roleRef:
+  kind: Role
+  name: statefulset-reader
+  apiGroup: rbac.authorization.k8s.io
+
+---
+# -------------------------------
 # ConfigMap for Configuration
 # -------------------------------
 apiVersion: v1
@@ -27,51 +56,51 @@ spec:
     - name: "8001"
       port: 8001
       targetPort: 8001
-    - port: 8002
+    - name: "8002"
+      port: 8002
       targetPort: 8002
-      name: "8002"
-    - port: 8003
-      name: "8003"
+    - name: "8003"
+      port: 8003
       targetPort: 8003
-    - port: 8004
+    - name: "8004"
+      port: 8004
       targetPort: 8004
-      name: "8004"
-    - port: 8013
+    - name: "8013"
+      port: 8013
       targetPort: 8013
-      name: "8013"
-    - port: 8012
+    - name: "8012"
+      port: 8012
       targetPort: 8012
-      name: "8012"
-    - port: 8014
+    - name: "8014"
+      port: 8014
       targetPort: 8014
-      name: "8014"
-    - port: 8023
+    - name: "8023"
+      port: 8023
       targetPort: 8023
-      name: "8023"
-    - port: 8021
+    - name: "8021"
+      port: 8021
       targetPort: 8021
-      name: "8021"
-    - port: 8024
+    - name: "8024"
+      port: 8024
       targetPort: 8024
-      name: "8024"
-    - port: 8032
+    - name: "8032"
+      port: 8032
       targetPort: 8032
-      name: "8032"
-    - port: 8031
+    - name: "8031"
+      port: 8031
       targetPort: 8031
-      name: "8031"
-    - port: 8034
+    - name: "8034"
+      port: 8034
       targetPort: 8034
-      name: "8034"
-    - port: 8043
+    - name: "8043"
+      port: 8043
       targetPort: 8043
-      name: "8043"
-    - port: 8041
+    - name: "8041"
+      port: 8041
       targetPort: 8041
-      name: "8041"
-    - port: 8042
+    - name: "8042"
+      port: 8042
       targetPort: 8042
-      name: "8042"
 
 ---
 # -------------------------------
@@ -138,7 +167,7 @@ spec:
     spec:
       containers:
         - name: kv-store
-          image: dnagard/kv_store:v7.5
+          image: dnagard/kv_store:v7.11
           imagePullPolicy: Always
           env:
             - name: NODES
@@ -158,8 +187,7 @@ spec:
           command: ["/bin/sh", "-c"]
           args:
             [
-              "export PID=$(echo $POD_NAME | sed 's/[^0-9]*\\([0-9]*\\)$/\\1/')&& PID=$((PID + 1))
-              && exec kv_demo",
+              "export PID=$(echo $POD_NAME | sed 's/[^0-9]*\\([0-9]*\\)$/\\1/') && PID=$((PID + 1)) && exec kv_demo",
             ]
           volumeMounts:
             - name: data
