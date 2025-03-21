@@ -284,7 +284,7 @@ The CLI prints connection events, responses (such as the latest decision index),
 ## Acknowledgements & References
 
 - **OmniPaxos:**  
-  Developed by Harold Ng at KTH.  
+  Developed by Harald Ng at KTH.  
   - [OmniPaxos: Breaking the Barriers of Partial Connectivity](https://dl.acm.org/doi/pdf/10.1145/3552326.3587441)  
   - [OmniPaxos – A Distributed Log Library](https://omnipaxos.com/)
 - **Rust Documentation:**  
